@@ -5,8 +5,8 @@ import threading
 from zhihu_scraper import run_zhihu_scraper
 
 # ====================== 【配置区】 ======================
-TG_BOT_TOKEN = "你的_TELEGRAM_BOT_TOKEN"
-TG_CHAT_ID = "你的_CHAT_ID"
+TG_BOT_TOKEN = "8714306288:AAEkVn4oF-qsntK8e6C5doa9QztmuUlVqWs"
+TG_CHAT_ID = "8126586848"
 LIMIT_PER_RUN = 20
 # =======================================================
 
