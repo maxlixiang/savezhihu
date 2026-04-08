@@ -1,0 +1,7 @@
+# 忽略登录凭证和数据库，千万不能上传！
+state.json
+zhihu_articles.db
+
+# 忽略 Python 缓存和下载的图片文件夹
+__pycache__/
+知乎_Juan_动态合集(含本地图片)/
