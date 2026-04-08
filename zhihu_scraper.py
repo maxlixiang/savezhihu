@@ -84,7 +84,7 @@ def download_img_and_replace_md_link(md_content, article_title):
     return md_content
 
 
-def run_zhihu_scraper(limit=20):
+def run_zhihu_scraper(limit=20, progress_callback=None): # 🌟 新增回调参数
     """供外部调用的核心抓取函数，返回本次新增的文章标题列表"""
     init_db()
     newly_scraped_titles = []
@@ -92,10 +92,8 @@ def run_zhihu_scraper(limit=20):
 
     print("\n🚀 [Scraper] 正在启动无头浏览器...")
     with sync_playwright() as p:
-        # ⚠️ 注意：VPS上必须 headless=True
         browser = p.chromium.launch(headless=True) 
         
-        # 🌟 核心：加载我们本地生成的 state.json 凭证！
         if not os.path.exists("state.json"):
             print("❌ 找不到 state.json，请先运行 init_login.py 并将文件放入同目录！")
             return ["[报错] 缺失 state.json 登录凭证"]
@@ -114,7 +112,7 @@ def run_zhihu_scraper(limit=20):
             page.goto(f"https://www.zhihu.com/people/{USER_ID}/activities", wait_until="domcontentloaded")
 
         time.sleep(4)
-        consecutive_exists_count = 0 # 记录连续遇到老文章的次数
+        consecutive_exists_count = 0 
 
         while collected_count < limit:
             items = page.locator('.List-item')
@@ -159,20 +157,23 @@ def run_zhihu_scraper(limit=20):
 
                 clean_title_str = clean_file_name(f"{time_str} {title}")
 
-                # 🌟 核心：查库去重
                 if is_article_exists(clean_title_str):
                     consecutive_exists_count += 1
-                    # 优化：如果连续 10 篇文章都在数据库里，说明更新的都已经抓过了，提前结束！
                     if consecutive_exists_count > 10:
                         print("🛑 [Scraper] 连续遇到 10 篇老文章，增量抓取完成，提前结束！")
                         browser.close()
                         return newly_scraped_titles
                     continue
                 else:
-                    consecutive_exists_count = 0 # 遇到新文章，清零
+                    consecutive_exists_count = 0 
                     found_new_in_this_loop = True
 
                 print(f"\n[Scraper] 正在处理新动态：{clean_title_str}")
+                
+                # 🌟 核心：触发回调函数，去更新 Telegram 的进度条！
+                if progress_callback:
+                    progress_callback(collected_count, limit, clean_title_str)
+
                 item.scroll_into_view_if_needed()
                 time.sleep(random.uniform(0.5, 1.2))
 
@@ -195,7 +196,6 @@ def run_zhihu_scraper(limit=20):
                 with open(md_file_path, "w", encoding="utf-8") as f:
                     f.write(f"# {title}\n\n---\n\n{final_md}")  
 
-                # 🌟 核心：存入数据库，并加入推送列表
                 save_article_to_db(clean_title_str)
                 newly_scraped_titles.append(clean_title_str)
                 collected_count += 1

@@ -13,13 +13,41 @@ LIMIT_PER_RUN = 20
 bot = telebot.TeleBot(TG_BOT_TOKEN)
 
 def execute_scrape_task(is_manual=False):
-    """执行抓取任务并发送 TG 报告"""
+    """执行抓取任务并发送 TG 报告（包含动态进度条）"""
     trigger_type = "手动触发 (/latest)" if is_manual else "凌晨定时增量"
-    bot.send_message(TG_CHAT_ID, f"🔄 开始执行知乎抓取任务 ({trigger_type})... 请稍候。")
     
-    try:
-        new_articles = run_zhihu_scraper(limit=LIMIT_PER_RUN)
+    # 先发送一条初始状态消息，并记录这条消息的 ID
+    status_msg = bot.send_message(TG_CHAT_ID, f"🔄 启动知乎爬虫 ({trigger_type})...\n\n⏳ 正在打开浏览器加载主页...")
+    msg_id = status_msg.message_id
+    last_text = ""
+
+    # 🌟 定义回调函数：生成进度条并更新消息
+    def progress_cb(current, total, current_title):
+        nonlocal last_text
+        percent = int((current / total) * 10)
+        bar = "█" * percent + "░" * (10 - percent)  # 拼装可视化进度条
         
+        text = f"🔄 抓取中 ({trigger_type})...\n\n📊 进度: [{bar}] {current}/{total}\n📝 正在提取: {current_title}"
+        
+        # 为了防止触发 TG 的频繁编辑限制，只有文本改变时才发请求
+        if text != last_text:
+            try:
+                bot.edit_message_text(text, chat_id=TG_CHAT_ID, message_id=msg_id)
+                last_text = text
+            except Exception:
+                pass # 忽略 Telegram 偶尔的网络或消息未改变报错
+
+    try:
+        # 将进度条函数传递给爬虫
+        new_articles = run_zhihu_scraper(limit=LIMIT_PER_RUN, progress_callback=progress_cb)
+        
+        # 抓取结束后，删掉那条进度条消息，保持聊天界面清爽
+        try:
+            bot.delete_message(TG_CHAT_ID, msg_id)
+        except:
+            pass
+        
+        # 发送最终的汇总报告
         if not new_articles:
             msg = f"✅ 抓取完成 ({trigger_type})！\n目前主页没有发现新的动态。"
         elif "[报错]" in new_articles[0]:
