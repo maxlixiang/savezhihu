@@ -4,3 +4,4 @@ markdownify
 requests
 pyTelegramBotAPI
 schedule
+python-dotenv

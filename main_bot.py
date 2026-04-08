@@ -1,16 +1,29 @@
+import os
 import telebot
 import schedule
 import time
 import threading
+import subprocess
+from dotenv import load_dotenv  # 🌟 引入 dotenv
 from zhihu_scraper import run_zhihu_scraper
 
+# 🌟 加载同目录下的 .env 文件
+load_dotenv()
+
 # ====================== 【配置区】 ======================
-TG_BOT_TOKEN = "8714306288:AAEkVn4oF-qsntK8e6C5doa9QztmuUlVqWs"
-TG_CHAT_ID = "8126586848"
+# 从环境变量中安全读取敏感信息
+TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
+TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 LIMIT_PER_RUN = 20
 # =======================================================
 
+# 增加一个安全校验，防止没配好 .env 就瞎跑
+if not TG_BOT_TOKEN or not TG_CHAT_ID:
+    raise ValueError("❌ 致命错误：环境变量中缺失 TG_BOT_TOKEN 或 TG_CHAT_ID，请检查 .env 文件！")
+
 bot = telebot.TeleBot(TG_BOT_TOKEN)
+
+# ... [下面的 execute_scrape_task 及其余代码保持完全不变] ...
 
 def execute_scrape_task(is_manual=False):
     """执行抓取任务并发送 TG 报告（包含动态进度条）"""
