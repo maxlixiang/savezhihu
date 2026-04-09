@@ -11,8 +11,12 @@ from playwright.sync_api import sync_playwright
 
 USER_ID = "li-xiang-57-76"
 AUTHOR_NAME = "Juan"
-MAIN_SAVE_DIR = f"知乎_{AUTHOR_NAME}_动态合集(含本地图片)"
 DB_FILE = "zhihu_articles.db"
+
+# 🌟 动态获取当前年份 (例如 "2026")
+current_year = time.strftime("%Y")
+# 🌟 路径改为 GitHub 仓库对应的年份文件夹
+MAIN_SAVE_DIR = os.path.join("save_zhihu_activity", current_year)
 
 if not os.path.exists(MAIN_SAVE_DIR):
     os.makedirs(MAIN_SAVE_DIR)

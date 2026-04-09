@@ -1,13 +1,13 @@
-# 使用 Playwright 官方 Python 镜像，自带无头浏览器底层依赖，极其稳定
 FROM mcr.microsoft.com/playwright/python:v1.58.0-jammy
 
 WORKDIR /app
-
-# 复制当前目录下所有文件到容器内
 COPY . /app
 
-# 安装 Python 库
+# 🌟 核心：安装 tzdata(时区数据) 和 git，并清理缓存减小体积
+RUN apt-get update && apt-get install -y git tzdata && rm -rf /var/lib/apt/lists/*
+# 🌟 强制将 Docker 系统时区设为北京时间
+ENV TZ="Asia/Shanghai"
+
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 运行 TG 机器人主程序
 CMD ["python", "main_bot.py"]
