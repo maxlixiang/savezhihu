@@ -194,41 +194,51 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                     raw_md = f"【⚠️ 正文提取失败】{str(e)[:40]}"
 
                 # ==========================================
-                # 🌟 新增核心功能：自动展开并抓取评论区
+                # 🌟 新增核心功能：自动展开并抓取评论区 (深度优化版)
                 # ==========================================
                 comments_md_text = ""
                 try:
-                    # 寻找“评论”按钮
-                    comment_btn = item.locator('button:has-text("评论")').first
+                    # 1. 精准寻找带有数字的“XX 条评论”按钮
+                    comment_btn = item.locator('button').filter(has_text=re.compile(r"\d+\s*条评论")).first
                     if comment_btn.count() > 0:
                         print("   💬 发现评论区，正在尝试展开...")
                         comment_btn.click(force=True)
-                        time.sleep(random.uniform(2.0, 3.5)) # 给网络一点时间加载评论
+                        time.sleep(random.uniform(2.5, 4.0)) # 等待评论渲染完成
 
-                        # 定位所有的评论容器（知乎评论类名通常是 CommentItemV2 或 CommentItem）
-                        comment_items = item.locator('.CommentItemV2, .CommentItem')
+                        # 2. 全局寻找“可见”的评论元素（完美兼容内联评论和弹窗评论）
+                        comment_items = page.locator('.CommentItemV2:visible, .CommentItem:visible')
                         cmt_count = comment_items.count()
                         
                         if cmt_count > 0:
                             comments_md_text += "\n\n---\n### 💬 精选评论 (第一页)\n\n"
-                            for c_idx in range(cmt_count):
+                            limit_cmts = min(cmt_count, 15) # 最多抓取15条，防止页面太长
+                            
+                            for c_idx in range(limit_cmts):
                                 cmt_node = comment_items.nth(c_idx)
                                 try:
-                                    # 提取评论作者
+                                    # 提取作者
                                     c_author_node = cmt_node.locator('.UserLink-link, .CommentItemV2-metaAuthor').first
                                     c_author = c_author_node.inner_text().strip() if c_author_node.count() > 0 else "匿名用户"
                                     
-                                    # 提取评论内容
-                                    c_content_node = cmt_node.locator('.RichText, .CommentContent').first
+                                    # 提取正文
+                                    c_content_node = cmt_node.locator('.CommentContent, .RichText').first
                                     c_content = c_content_node.inner_text().strip() if c_content_node.count() > 0 else ""
                                     
                                     if c_content:
-                                        # 替换换行符，确保 Markdown 引用块排版不乱
+                                        # 替换换行符为引用格式，排版更美观
                                         c_content = c_content.replace('\n', '\n> ')
                                         comments_md_text += f"> **{c_author}**：{c_content}\n>\n"
                                 except Exception:
                                     continue
-                            print(f"   ✅ 成功提取 {cmt_count} 条评论！")
+                            print(f"   ✅ 成功提取 {limit_cmts} 条精选评论！")
+                        else:
+                            print("   ⚠️ 展开了评论区，但未解析到可见评论。")
+                            
+                        # 3. 抓完后，尝试点击“收起评论”或弹窗的“关闭”按钮，保持页面整洁
+                        close_btn = page.locator('button[aria-label="关闭"], button:has-text("收起评论")').filter(visible=True).first
+                        if close_btn.count() > 0:
+                            close_btn.click(force=True)
+                            time.sleep(1.0)
                 except Exception as e:
                     print(f"   ⚠️ 提取评论失败: {str(e)[:40]}")
                 # ==========================================
