@@ -183,23 +183,29 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                     raw_md = f"【⚠️ 正文提取失败】{str(e)[:40]}"
 
                 # ==========================================
-                # 🌟 终极 JS 注入大法：强行提取评论
+                # 🌟 终极 JS 注入 + 动态等待提取法
                 # ==========================================
                 comments_md_text = ""
                 try:
-                    # 1. 用 JS 强行点击按钮（绕过遮挡）
-                    print("   💬 尝试定位评论区...")
+                    print("   💬 尝试定位评论区按钮...")
+                    # 1. 扩大撒网：不限标签，只要类名包含操作栏特征，且文字包含“评论”
                     comment_opened = page.evaluate("""(item) => {
-                        let btn = Array.from(item.querySelectorAll('button')).find(b => b.innerText.includes('条评论'));
+                        let actions = Array.from(item.querySelectorAll('.ContentItem-action, button, [role="button"], a'));
+                        let btn = actions.find(b => b.innerText && b.innerText.includes('评论') && !b.innerText.includes('收起'));
                         if(btn) { btn.click(); return true; }
                         return false;
                     }""", item.element_handle())
 
                     if comment_opened:
-                        print("   💬 已触发评论点击，等待加载...")
-                        time.sleep(random.uniform(3.0, 4.5))
+                        print("   💬 已点击评论按钮，等待网络数据加载...")
+                        # 🌟 核心升级：不要用 time.sleep 死等！智能等待评论元素出现在网页中（最多等8秒）
+                        try:
+                            page.wait_for_selector('div[class*="CommentItem"]', timeout=8000)
+                            print("   💬 评论数据已呈现页面，开始底层提取...")
+                        except:
+                            print("   ⚠️ 等待 8 秒仍未见评论元素，可能无评论或网络极慢。")
 
-                        # 2. 直接用 JS 去 DOM 底层榨取数据！
+                        # 2. 直接用 JS 去 DOM 底层榨取数据
                         extracted_comments = page.evaluate("""() => {
                             let cmts = [];
                             let nodes = document.querySelectorAll('div[class*="CommentItem"]');
@@ -212,7 +218,9 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                                 let contentEl = node.querySelector('div[class*="CommentContent"], div[class*="RichText"]');
                                 if(contentEl) content = contentEl.innerText.trim();
 
-                                if(content && !content.includes('已删除')) cmts.push({author: author, content: content});
+                                if(content && !content.includes('已删除')) {
+                                    cmts.push({author: author, content: content});
+                                }
                             });
                             return cmts;
                         }""")
@@ -226,14 +234,17 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                                 comments_md_text += f"> **{c['author']}**：{text_lines}\n>\n"
                             print(f"   🎉 成功提取 {limit_cmts} 条评论！")
                         else:
-                            print("   ⚠️ 评论区似乎是空的，或者因为网络未加载完成。")
+                            print("   ⚠️ 评论区提取结果为空，未能匹配到文本。")
 
-                        # 3. JS 强制关闭弹窗
+                        # 3. JS 强制关闭弹窗/收起评论
                         page.evaluate("""() => {
-                            let closeBtn = document.querySelector('button[aria-label="关闭"], button:has-text("收起评论")');
+                            let actions = Array.from(document.querySelectorAll('button, a, div'));
+                            let closeBtn = actions.find(b => b.innerText && (b.innerText.includes('收起评论') || b.getAttribute('aria-label') === '关闭'));
                             if(closeBtn) closeBtn.click();
                         }""")
                         time.sleep(1.0)
+                    else:
+                        print("   💬 该卡片未发现评论按钮。")
                 except Exception as e:
                     print(f"   ⚠️ 提取评论发生异常: {str(e)[:60]}")
                 # ==========================================
