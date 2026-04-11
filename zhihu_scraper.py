@@ -4,16 +4,21 @@ import re
 import requests
 import random
 import sqlite3
+import builtins
 from urllib.parse import quote
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 from playwright.sync_api import sync_playwright
 
+# 🌟 终极 Debug 技巧：强制刷新所有 print 输出，防止 Docker 吞弃日志
+def print(*args, **kwargs):
+    kwargs['flush'] = True
+    builtins.print(*args, **kwargs)
+
 USER_ID = "li-xiang-57-76"
 AUTHOR_NAME = "Juan"
 DB_FILE = "zhihu_articles.db"
 
-# 🌟 动态获取当前年份
 current_year = time.strftime("%Y")
 MAIN_SAVE_DIR = os.path.join("save_zhihu_activity", current_year)
 
@@ -25,16 +30,10 @@ headers = {
     "Referer": "https://www.zhihu.com/"
 }
 
-# --- 数据库初始化 ---
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS articles (
-            title TEXT PRIMARY KEY,
-            scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS articles (title TEXT PRIMARY KEY, scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
     conn.close()
 
@@ -55,8 +54,7 @@ def save_article_to_db(title):
 
 def clean_file_name(title):
     illegal_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '，', '。', '\n', '\r']
-    for char in illegal_chars:
-        title = title.replace(char, "")
+    for char in illegal_chars: title = title.replace(char, "")
     return title.strip()[:60]
 
 def download_img_and_replace_md_link(md_content, article_title):
@@ -82,9 +80,8 @@ def download_img_and_replace_md_link(md_content, article_title):
 
             safe_rel_path = quote(f"{img_sub_dir}/{img_name}")
             md_content = md_content.replace(img_url, safe_rel_path)
-        except Exception: continue
+        except: continue
     return md_content
-
 
 def run_zhihu_scraper(limit=20, progress_callback=None): 
     init_db()
@@ -94,9 +91,8 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
     print("\n🚀 [Scraper] 正在启动无头浏览器...")
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True) 
-        
         if not os.path.exists("state.json"):
-            print("❌ 找不到 state.json，请先运行 init_login.py 并将文件放入同目录！")
+            print("❌ 找不到 state.json 凭证！")
             return ["[报错] 缺失 state.json 登录凭证"]
             
         context = browser.new_context(
@@ -106,7 +102,7 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
         )
         page = context.new_page()
 
-        print(f"👉 [Scraper] 带着登录状态访问主页...")
+        print("👉 [Scraper] 访问知乎主页...")
         try:
             page.goto(f"https://www.zhihu.com/people/{USER_ID}/activities", wait_until="domcontentloaded")
         except:
@@ -137,10 +133,7 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
 
                 try:
                     time_match = re.search(r"(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2})", meta_text)
-                    if time_match:
-                        time_str = f"[{time_match.group(1)}_{time_match.group(2).replace(':', '-')}]"
-                    else:
-                        time_str = f"[{int(time.time())}]"
+                    time_str = f"[{time_match.group(1)}_{time_match.group(2).replace(':', '-')}]" if time_match else f"[{int(time.time())}]"
                 except: time_str = f"[{int(time.time())}]"
 
                 is_pin = "想法" in action_text
@@ -148,7 +141,6 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                     try:
                         author_el = item.locator('.AuthorInfo-name').first
                         author_name = author_el.inner_text().strip().split('\n')[0].strip() if author_el.count() > 0 else "未知作者"
-                        if not author_name: author_name = "未知作者"
                     except: author_name = "未知作者"
                     title = f"{author_name}_想法"
                 else:
@@ -162,27 +154,25 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                 if is_article_exists(clean_title_str):
                     consecutive_exists_count += 1
                     if consecutive_exists_count > 10:
-                        print("🛑 [Scraper] 连续遇到 10 篇老文章，增量抓取完成，提前结束！")
+                        print("🛑 [Scraper] 连续遇到老文章，增量抓取结束。")
                         browser.close()
                         return newly_scraped_titles
                     continue
-                else:
-                    consecutive_exists_count = 0 
-                    found_new_in_this_loop = True
-
-                print(f"\n[Scraper] 正在处理新动态：{clean_title_str}")
                 
-                if progress_callback:
-                    progress_callback(collected_count + 1, limit, clean_title_str)
+                consecutive_exists_count = 0 
+                found_new_in_this_loop = True
+
+                print(f"\n[Scraper] 处理新动态：{clean_title_str}")
+                if progress_callback: progress_callback(collected_count + 1, limit, clean_title_str)
 
                 item.scroll_into_view_if_needed()
                 time.sleep(random.uniform(0.5, 1.2))
 
                 # === 展开正文 ===
-                expand_btn = item.locator('button:has-text("阅读全文"), button:has-text("展开全文"), a:has-text("阅读全文")')
+                expand_btn = item.locator('button:has-text("阅读全文"), button:has-text("展开全文")')
                 if expand_btn.count() > 0:
                     try:
-                        expand_btn.first.click(force=True)
+                        expand_btn.first.evaluate("node => node.click()")
                         time.sleep(random.uniform(1.5, 2.5)) 
                     except: pass
 
@@ -193,87 +183,64 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                     raw_md = f"【⚠️ 正文提取失败】{str(e)[:40]}"
 
                 # ==========================================
-                # 🌟 新增核心功能：自动展开并抓取评论区 (高兼容+深度特征探针版)
+                # 🌟 终极 JS 注入大法：强行提取评论
                 # ==========================================
                 comments_md_text = ""
                 try:
-                    # 1. 寻找评论按钮 (扩大元素范围，兼容 button, a, div 等容器)
-                    comment_btn = item.locator('button, [role="button"], a').filter(has_text=re.compile(r"\d+\s*条评论|添加评论")).first
-                    
-                    if comment_btn.count() > 0:
-                        btn_text = comment_btn.inner_text().strip()
-                        if "收起" not in btn_text:
-                            print(f"   💬 发现评论区按钮 [{btn_text}]，正在点击展开...")
-                            comment_btn.click(force=True)
-                            time.sleep(random.uniform(3.0, 5.0)) # 延长等待，确保弹窗或内联评论完全挂载
+                    # 1. 用 JS 强行点击按钮（绕过遮挡）
+                    print("   💬 尝试定位评论区...")
+                    comment_opened = page.evaluate("""(item) => {
+                        let btn = Array.from(item.querySelectorAll('button')).find(b => b.innerText.includes('条评论'));
+                        if(btn) { btn.click(); return true; }
+                        return false;
+                    }""", item.element_handle())
 
-                        # 2. 定位评论内容 (全局搜索，兼容弹窗和内联)
-                        selectors = ['.CommentItemV2', '.CommentItem', '.rootComment', 'div[class^="CommentItem"]']
-                        comment_items = None
-                        
-                        for sel in selectors:
-                            items = page.locator(f'{sel}:visible')
-                            if items.count() > 0:
-                                comment_items = items
-                                print(f"   ✅ 使用类名 [{sel}] 定位到 {items.count()} 条评论元素！")
-                                break
-                        
-                        # 兜底方案：如果没有找到已知类名，启用【结构特征探针】
-                        if not comment_items or comment_items.count() == 0:
-                            print("   ⚠️ 常规类名失效，启用【结构特征探针】寻找评论...")
-                            # 寻找包含“回复”操作按钮的嵌套结构（这是评论区最稳固的特征）
-                            comment_items = page.locator('div:has(> div > button:has-text("回复")):visible')
+                    if comment_opened:
+                        print("   💬 已触发评论点击，等待加载...")
+                        time.sleep(random.uniform(3.0, 4.5))
 
-                        cmt_count = comment_items.count() if comment_items else 0
-                        
+                        # 2. 直接用 JS 去 DOM 底层榨取数据！
+                        extracted_comments = page.evaluate("""() => {
+                            let cmts = [];
+                            let nodes = document.querySelectorAll('div[class*="CommentItem"]');
+                            nodes.forEach(node => {
+                                let author = "匿名用户";
+                                let authorEl = node.querySelector('a[class*="UserLink"], div[class*="Author"]');
+                                if(authorEl) author = authorEl.innerText.split('\\n')[0].trim();
+
+                                let content = "";
+                                let contentEl = node.querySelector('div[class*="CommentContent"], div[class*="RichText"]');
+                                if(contentEl) content = contentEl.innerText.trim();
+
+                                if(content && !content.includes('已删除')) cmts.push({author: author, content: content});
+                            });
+                            return cmts;
+                        }""")
+
+                        cmt_count = len(extracted_comments)
                         if cmt_count > 0:
                             comments_md_text += "\n\n---\n### 💬 精选评论 (第一页)\n\n"
-                            limit_cmts = min(cmt_count, 15) # 最多提取前 15 条
-                            
-                            for c_idx in range(limit_cmts):
-                                cmt_node = comment_items.nth(c_idx)
-                                try:
-                                    # 提取作者
-                                    c_author_node = cmt_node.locator('.UserLink-link, .CommentItemV2-metaAuthor, [class*="Author"]').first
-                                    c_author = c_author_node.inner_text().strip() if c_author_node.count() > 0 else "匿名用户"
-                                    
-                                    # 提取正文
-                                    c_content_node = cmt_node.locator('.CommentContent, .RichText, [class*="Content"]').first
-                                    c_content = c_content_node.inner_text().strip() if c_content_node.count() > 0 else ""
-                                    
-                                    # 如果结构大变抓不到正文，启动暴力文本过滤
-                                    if not c_content:
-                                        raw_text = cmt_node.inner_text()
-                                        if raw_text and "回复" in raw_text:
-                                            # 切掉底部的操作按钮文本，保留纯评论
-                                            c_content = raw_text.split("回复")[0].replace(c_author, "").strip()
-                                            
-                                    if c_content:
-                                        # 优雅的 Markdown 引用排版
-                                        c_content = c_content.replace('\n', '\n> ')
-                                        comments_md_text += f"> **{c_author}**：{c_content}\n>\n"
-                                except Exception:
-                                    continue
-                            print(f"   🎉 成功提取并排版了 {limit_cmts} 条评论！")
+                            limit_cmts = min(cmt_count, 15)
+                            for c in extracted_comments[:limit_cmts]:
+                                text_lines = c['content'].replace('\n', '\n> ')
+                                comments_md_text += f"> **{c['author']}**：{text_lines}\n>\n"
+                            print(f"   🎉 成功提取 {limit_cmts} 条评论！")
                         else:
-                            print("   ❌ 展开了评论区，但未能解析到任何可见的评论。")
+                            print("   ⚠️ 评论区似乎是空的，或者因为网络未加载完成。")
 
-                        # 3. 操作完毕后，无论成败都关闭评论区，防止遮挡下一个动作
-                        close_btn = page.locator('button[aria-label="关闭"], button:has-text("收起评论")').filter(visible=True).first
-                        if close_btn.count() > 0:
-                            close_btn.click(force=True)
-                            time.sleep(1.0)
+                        # 3. JS 强制关闭弹窗
+                        page.evaluate("""() => {
+                            let closeBtn = document.querySelector('button[aria-label="关闭"], button:has-text("收起评论")');
+                            if(closeBtn) closeBtn.click();
+                        }""")
+                        time.sleep(1.0)
                 except Exception as e:
                     print(f"   ⚠️ 提取评论发生异常: {str(e)[:60]}")
                 # ==========================================
 
-                # 处理图片
                 final_md = download_img_and_replace_md_link(raw_md, clean_title_str)
-                
-                # 拼接正文和评论
                 final_md += comments_md_text
 
-                # 保存文件
                 md_file_path = os.path.join(MAIN_SAVE_DIR, f"{clean_title_str}.md")
                 with open(md_file_path, "w", encoding="utf-8") as f:
                     f.write(f"# {title}\n\n---\n\n{final_md}")  
