@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 from playwright.sync_api import sync_playwright
 
-# 🌟 终极 Debug 技巧：强制刷新所有 print 输出，防止 Docker 吞弃日志
+# 🌟 强制刷新日志输出
 def print(*args, **kwargs):
     kwargs['flush'] = True
     builtins.print(*args, **kwargs)
@@ -102,6 +102,25 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
         )
         page = context.new_page()
 
+        # ==========================================
+        # 🚨 开启“上帝模式”：全局 API 网络拦截器
+        # ==========================================
+        intercepted_comments = []
+        
+        def handle_response(response):
+            # 监听所有包含 "api/v4" 和 "comments" 的网络返回包
+            if "api/v4" in response.url and "comments" in response.url and response.request.method == "GET":
+                if response.status == 200:
+                    try:
+                        data = response.json()
+                        if "data" in data and isinstance(data["data"], list):
+                            intercepted_comments.append(data["data"])
+                    except Exception:
+                        pass
+                        
+        page.on("response", handle_response)
+        # ==========================================
+
         print("👉 [Scraper] 访问知乎主页...")
         try:
             page.goto(f"https://www.zhihu.com/people/{USER_ID}/activities", wait_until="domcontentloaded")
@@ -183,74 +202,65 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                     raw_md = f"【⚠️ 正文提取失败】{str(e)[:40]}"
 
                 # ==========================================
-                # 🌟 终极物理点击 + 视觉过滤提取法
+                # 🌟 从底层 API 提取评论 (降维打击)
                 # ==========================================
                 comments_md_text = ""
                 try:
-                    print("   💬 尝试定位【可视的】评论区按钮...")
-                    # 1. 使用原生 Playwright 定位器，严格过滤出【肉眼可见】的评论按钮！(避开隐藏的移动端组件陷阱)
-                    comment_btn = item.locator('button, [role="button"], a').filter(
-                        has_text=re.compile(r"\d+\s*条评论|添加评论")
-                    ).filter(visible=True).first
-
+                    # 定位评论按钮
+                    comment_btn = item.locator('button, [role="button"]').filter(has_text=re.compile(r"\d+\s*条评论|添加评论")).filter(visible=True).first
                     if comment_btn.count() > 0:
-                        btn_text = comment_btn.inner_text().strip()
-                        print(f"   💬 已找到按钮 [{btn_text}]，执行物理点击...")
-                        comment_btn.click(force=True)
+                        print("   💬 找到可见评论按钮，准备拦截网络请求...")
+                        # 每次点击前清空拦截池
+                        intercepted_comments.clear()
                         
-                        print("   💬 等待评论数据呈现...")
-                        try:
-                            # 智能等待评论框出现，包含"CommentItem"的元素，或者"还没有评论"的空状态
-                            page.wait_for_selector('div[class*="CommentItem"], div:has-text("还没有评论")', timeout=6000)
-                            print("   💬 评论DOM已就绪，开始底层提取...")
-                        except:
-                            print("   ⚠️ 智能等待超时，尝试强行提取当前可见文本...")
+                        # 使用 JS 强制点击（不会触发跳转）
+                        comment_btn.evaluate("node => node.click()")
                         
-                        # 稍微给 0.5 秒让知乎的过渡动画彻底渲染完成
-                        time.sleep(0.5)
-
-                        # 2. 用 JS 榨取底层呈现的数据
-                        extracted_comments = page.evaluate("""() => {
-                            let cmts = [];
-                            let nodes = document.querySelectorAll('div[class*="CommentItem"]');
-                            nodes.forEach(node => {
-                                let author = "匿名用户";
-                                let authorEl = node.querySelector('a[class*="UserLink"], div[class*="Author"]');
-                                if(authorEl) author = authorEl.innerText.split('\\n')[0].trim();
-
-                                let content = "";
-                                let contentEl = node.querySelector('div[class*="CommentContent"], div[class*="RichText"]');
-                                if(contentEl) content = contentEl.innerText.trim();
-
-                                if(content && !content.includes('已删除')) {
-                                    cmts.push({author: author, content: content});
-                                }
-                            });
-                            return cmts;
-                        }""")
-
-                        cmt_count = len(extracted_comments)
-                        if cmt_count > 0:
+                        print("   📡 正在半空中截停知乎官方评论数据...")
+                        # 轮询等待接口返回数据（最多等 4 秒）
+                        wait_time = 0
+                        while wait_time < 4.0:
+                            if len(intercepted_comments) > 0:
+                                break
+                            time.sleep(0.5)
+                            wait_time += 0.5
+                            
+                        # 如果拦截池里有数据，直接剥离 JSON
+                        if intercepted_comments:
+                            print("   ✅ 成功截获纯净 JSON 数据！开始脱壳排版...")
                             comments_md_text += "\n\n---\n### 💬 精选评论 (第一页)\n\n"
-                            limit_cmts = min(cmt_count, 15) # 最多拿15条
-                            for c in extracted_comments[:limit_cmts]:
-                                text_lines = c['content'].replace('\n', '\n> ')
-                                comments_md_text += f"> **{c['author']}**：{text_lines}\n>\n"
-                            print(f"   🎉 成功提取 {limit_cmts} 条评论！")
-                        else:
-                            print("   ⚠️ 提取结果为空（可能是0评论，或被知乎安全盾拦截）。")
-
-                        # 3. 物理关闭评论区
-                        try:
-                            close_btn = page.locator('button[aria-label="关闭"], button:has-text("收起评论")').filter(visible=True).first
-                            if close_btn.count() > 0:
-                                close_btn.click(force=True)
+                            added_count = 0
+                            
+                            # 获取第一页数据
+                            first_page_data = intercepted_comments[0] 
+                            limit_cmts = min(len(first_page_data), 15) # 最多取 15 条
+                            
+                            for c in first_page_data[:limit_cmts]:
+                                # 提取作者
+                                c_author = c.get("author", {}).get("member", {}).get("name", "匿名用户")
+                                
+                                # 提取内容并清洗 HTML 标签
+                                raw_html = c.get("content", "")
+                                if raw_html:
+                                    c_content = BeautifulSoup(raw_html, "html.parser").get_text(separator="\n").strip()
+                                    if c_content and "已删除" not in c_content:
+                                        c_content = c_content.replace('\n', '\n> ')
+                                        comments_md_text += f"> **{c_author}**：{c_content}\n>\n"
+                                        added_count += 1
+                                        
+                            print(f"   🎉 完美解析了 {added_count} 条评论！")
+                            
+                            # 抓完后再次点击按钮，收起评论区，保持整洁
+                            try:
+                                comment_btn.evaluate("node => node.click()")
                                 time.sleep(0.5)
-                        except: pass
+                            except: pass
+                        else:
+                            print("   ⚠️ 拦截 4 秒未收到数据，可能是网络超时或0评论。")
                     else:
-                        print("   💬 当前卡片没有找到【可见】的评论按钮。")
+                        print("   💬 当前卡片未发现评论按钮。")
                 except Exception as e:
-                    print(f"   ⚠️ 提取评论发生异常: {str(e)[:60]}")
+                    print(f"   ⚠️ API 拦截处理异常: {str(e)[:60]}")
                 # ==========================================
 
                 final_md = download_img_and_replace_md_link(raw_md, clean_title_str)
