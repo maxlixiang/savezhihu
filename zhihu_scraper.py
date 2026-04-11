@@ -183,29 +183,33 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                     raw_md = f"【⚠️ 正文提取失败】{str(e)[:40]}"
 
                 # ==========================================
-                # 🌟 终极 JS 注入 + 动态等待提取法
+                # 🌟 终极物理点击 + 视觉过滤提取法
                 # ==========================================
                 comments_md_text = ""
                 try:
-                    print("   💬 尝试定位评论区按钮...")
-                    # 1. 扩大撒网：不限标签，只要类名包含操作栏特征，且文字包含“评论”
-                    comment_opened = page.evaluate("""(item) => {
-                        let actions = Array.from(item.querySelectorAll('.ContentItem-action, button, [role="button"], a'));
-                        let btn = actions.find(b => b.innerText && b.innerText.includes('评论') && !b.innerText.includes('收起'));
-                        if(btn) { btn.click(); return true; }
-                        return false;
-                    }""", item.element_handle())
+                    print("   💬 尝试定位【可视的】评论区按钮...")
+                    # 1. 使用原生 Playwright 定位器，严格过滤出【肉眼可见】的评论按钮！(避开隐藏的移动端组件陷阱)
+                    comment_btn = item.locator('button, [role="button"], a').filter(
+                        has_text=re.compile(r"\d+\s*条评论|添加评论")
+                    ).filter(visible=True).first
 
-                    if comment_opened:
-                        print("   💬 已点击评论按钮，等待网络数据加载...")
-                        # 🌟 核心升级：不要用 time.sleep 死等！智能等待评论元素出现在网页中（最多等8秒）
+                    if comment_btn.count() > 0:
+                        btn_text = comment_btn.inner_text().strip()
+                        print(f"   💬 已找到按钮 [{btn_text}]，执行物理点击...")
+                        comment_btn.click(force=True)
+                        
+                        print("   💬 等待评论数据呈现...")
                         try:
-                            page.wait_for_selector('div[class*="CommentItem"]', timeout=8000)
-                            print("   💬 评论数据已呈现页面，开始底层提取...")
+                            # 智能等待评论框出现，包含"CommentItem"的元素，或者"还没有评论"的空状态
+                            page.wait_for_selector('div[class*="CommentItem"], div:has-text("还没有评论")', timeout=6000)
+                            print("   💬 评论DOM已就绪，开始底层提取...")
                         except:
-                            print("   ⚠️ 等待 8 秒仍未见评论元素，可能无评论或网络极慢。")
+                            print("   ⚠️ 智能等待超时，尝试强行提取当前可见文本...")
+                        
+                        # 稍微给 0.5 秒让知乎的过渡动画彻底渲染完成
+                        time.sleep(0.5)
 
-                        # 2. 直接用 JS 去 DOM 底层榨取数据
+                        # 2. 用 JS 榨取底层呈现的数据
                         extracted_comments = page.evaluate("""() => {
                             let cmts = [];
                             let nodes = document.querySelectorAll('div[class*="CommentItem"]');
@@ -228,23 +232,23 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                         cmt_count = len(extracted_comments)
                         if cmt_count > 0:
                             comments_md_text += "\n\n---\n### 💬 精选评论 (第一页)\n\n"
-                            limit_cmts = min(cmt_count, 15)
+                            limit_cmts = min(cmt_count, 15) # 最多拿15条
                             for c in extracted_comments[:limit_cmts]:
                                 text_lines = c['content'].replace('\n', '\n> ')
                                 comments_md_text += f"> **{c['author']}**：{text_lines}\n>\n"
                             print(f"   🎉 成功提取 {limit_cmts} 条评论！")
                         else:
-                            print("   ⚠️ 评论区提取结果为空，未能匹配到文本。")
+                            print("   ⚠️ 提取结果为空（可能是0评论，或被知乎安全盾拦截）。")
 
-                        # 3. JS 强制关闭弹窗/收起评论
-                        page.evaluate("""() => {
-                            let actions = Array.from(document.querySelectorAll('button, a, div'));
-                            let closeBtn = actions.find(b => b.innerText && (b.innerText.includes('收起评论') || b.getAttribute('aria-label') === '关闭'));
-                            if(closeBtn) closeBtn.click();
-                        }""")
-                        time.sleep(1.0)
+                        # 3. 物理关闭评论区
+                        try:
+                            close_btn = page.locator('button[aria-label="关闭"], button:has-text("收起评论")').filter(visible=True).first
+                            if close_btn.count() > 0:
+                                close_btn.click(force=True)
+                                time.sleep(0.5)
+                        except: pass
                     else:
-                        print("   💬 该卡片未发现评论按钮。")
+                        print("   💬 当前卡片没有找到【可见】的评论按钮。")
                 except Exception as e:
                     print(f"   ⚠️ 提取评论发生异常: {str(e)[:60]}")
                 # ==========================================
