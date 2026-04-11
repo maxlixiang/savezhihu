@@ -186,7 +186,6 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                         time.sleep(random.uniform(1.5, 2.5)) 
                     except: pass
 
-                # 提取正文 Markdown
                 try:
                     content_box = item.locator('.RichContent-inner, .RichText').first
                     raw_md = "\n".join([line for line in md(content_box.inner_html(), heading_style="ATX").split("\n") if line.strip()])
@@ -194,53 +193,78 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                     raw_md = f"【⚠️ 正文提取失败】{str(e)[:40]}"
 
                 # ==========================================
-                # 🌟 新增核心功能：自动展开并抓取评论区 (深度优化版)
+                # 🌟 新增核心功能：自动展开并抓取评论区 (高兼容+深度特征探针版)
                 # ==========================================
                 comments_md_text = ""
                 try:
-                    # 1. 精准寻找带有数字的“XX 条评论”按钮
-                    comment_btn = item.locator('button').filter(has_text=re.compile(r"\d+\s*条评论")).first
+                    # 1. 寻找评论按钮 (扩大元素范围，兼容 button, a, div 等容器)
+                    comment_btn = item.locator('button, [role="button"], a').filter(has_text=re.compile(r"\d+\s*条评论|添加评论")).first
+                    
                     if comment_btn.count() > 0:
-                        print("   💬 发现评论区，正在尝试展开...")
-                        comment_btn.click(force=True)
-                        time.sleep(random.uniform(2.5, 4.0)) # 等待评论渲染完成
+                        btn_text = comment_btn.inner_text().strip()
+                        if "收起" not in btn_text:
+                            print(f"   💬 发现评论区按钮 [{btn_text}]，正在点击展开...")
+                            comment_btn.click(force=True)
+                            time.sleep(random.uniform(3.0, 5.0)) # 延长等待，确保弹窗或内联评论完全挂载
 
-                        # 2. 全局寻找“可见”的评论元素（完美兼容内联评论和弹窗评论）
-                        comment_items = page.locator('.CommentItemV2:visible, .CommentItem:visible')
-                        cmt_count = comment_items.count()
+                        # 2. 定位评论内容 (全局搜索，兼容弹窗和内联)
+                        selectors = ['.CommentItemV2', '.CommentItem', '.rootComment', 'div[class^="CommentItem"]']
+                        comment_items = None
+                        
+                        for sel in selectors:
+                            items = page.locator(f'{sel}:visible')
+                            if items.count() > 0:
+                                comment_items = items
+                                print(f"   ✅ 使用类名 [{sel}] 定位到 {items.count()} 条评论元素！")
+                                break
+                        
+                        # 兜底方案：如果没有找到已知类名，启用【结构特征探针】
+                        if not comment_items or comment_items.count() == 0:
+                            print("   ⚠️ 常规类名失效，启用【结构特征探针】寻找评论...")
+                            # 寻找包含“回复”操作按钮的嵌套结构（这是评论区最稳固的特征）
+                            comment_items = page.locator('div:has(> div > button:has-text("回复")):visible')
+
+                        cmt_count = comment_items.count() if comment_items else 0
                         
                         if cmt_count > 0:
                             comments_md_text += "\n\n---\n### 💬 精选评论 (第一页)\n\n"
-                            limit_cmts = min(cmt_count, 15) # 最多抓取15条，防止页面太长
+                            limit_cmts = min(cmt_count, 15) # 最多提取前 15 条
                             
                             for c_idx in range(limit_cmts):
                                 cmt_node = comment_items.nth(c_idx)
                                 try:
                                     # 提取作者
-                                    c_author_node = cmt_node.locator('.UserLink-link, .CommentItemV2-metaAuthor').first
+                                    c_author_node = cmt_node.locator('.UserLink-link, .CommentItemV2-metaAuthor, [class*="Author"]').first
                                     c_author = c_author_node.inner_text().strip() if c_author_node.count() > 0 else "匿名用户"
                                     
                                     # 提取正文
-                                    c_content_node = cmt_node.locator('.CommentContent, .RichText').first
+                                    c_content_node = cmt_node.locator('.CommentContent, .RichText, [class*="Content"]').first
                                     c_content = c_content_node.inner_text().strip() if c_content_node.count() > 0 else ""
                                     
+                                    # 如果结构大变抓不到正文，启动暴力文本过滤
+                                    if not c_content:
+                                        raw_text = cmt_node.inner_text()
+                                        if raw_text and "回复" in raw_text:
+                                            # 切掉底部的操作按钮文本，保留纯评论
+                                            c_content = raw_text.split("回复")[0].replace(c_author, "").strip()
+                                            
                                     if c_content:
-                                        # 替换换行符为引用格式，排版更美观
+                                        # 优雅的 Markdown 引用排版
                                         c_content = c_content.replace('\n', '\n> ')
                                         comments_md_text += f"> **{c_author}**：{c_content}\n>\n"
                                 except Exception:
                                     continue
-                            print(f"   ✅ 成功提取 {limit_cmts} 条精选评论！")
+                            print(f"   🎉 成功提取并排版了 {limit_cmts} 条评论！")
                         else:
-                            print("   ⚠️ 展开了评论区，但未解析到可见评论。")
-                            
-                        # 3. 抓完后，尝试点击“收起评论”或弹窗的“关闭”按钮，保持页面整洁
+                            print("   ❌ 展开了评论区，但未能解析到任何可见的评论。")
+
+                        # 3. 操作完毕后，无论成败都关闭评论区，防止遮挡下一个动作
                         close_btn = page.locator('button[aria-label="关闭"], button:has-text("收起评论")').filter(visible=True).first
                         if close_btn.count() > 0:
                             close_btn.click(force=True)
                             time.sleep(1.0)
                 except Exception as e:
-                    print(f"   ⚠️ 提取评论失败: {str(e)[:40]}")
+                    print(f"   ⚠️ 提取评论发生异常: {str(e)[:60]}")
                 # ==========================================
 
                 # 处理图片
