@@ -7,7 +7,6 @@ import sqlite3
 import builtins
 import html
 from urllib.parse import quote
-from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 from playwright.sync_api import sync_playwright
 
@@ -60,10 +59,10 @@ def clean_file_name(title):
     for char in illegal_chars: title = title.replace(char, "")
     return title.strip()[:60]
 
+# 🌟 完全采用你验证过的纯净正则清洗方案
 def clean_html_text(value: str) -> str:
-    """清洗评论区的 HTML 标签"""
     text = re.sub(r"<br\s*/?>", "\n", value, flags=re.IGNORECASE)
-    text = BeautifulSoup(text, "html.parser").get_text(separator="")
+    text = re.sub(r"<[^>]+>", "", text)
     return html.unescape(text).strip()
 
 def download_img_and_replace_md_link(md_content, article_title):
@@ -195,33 +194,45 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                     raw_md = f"【⚠️ 正文提取失败】{str(e)[:40]}"
 
                 # ==========================================
-                # 🌟 核心重构（收窄范围）：仅针对“回答”请求 API
+                # 🌟 核心重构：融合成功脚本的提取逻辑
                 # ==========================================
                 comments_md_text = ""
                 try:
-                    # 1. 解析卡片中的所有链接，专门寻找“回答”的 ID
-                    hrefs = item.evaluate("""(node) => Array.from(node.querySelectorAll('a[href]')).map(el => el.href || '')""")
+                    # 1. 终极 ID 提取：优先读取知乎原生 data-zop 属性，其次使用正则匹配 href
+                    target_id = item.evaluate("""(node) => {
+                        let contentItem = node.querySelector('.ContentItem');
+                        if (contentItem) {
+                            let zopStr = contentItem.getAttribute('data-zop');
+                            if (zopStr) {
+                                try {
+                                    let zop = JSON.parse(zopStr);
+                                    if (zop.type === 'answer' && zop.itemId) {
+                                        return zop.itemId.toString();
+                                    }
+                                } catch(e) {}
+                            }
+                        }
+                        
+                        // 兜底：采用你的提取 href 正则法
+                        let links = Array.from(node.querySelectorAll('a[href]')).map(a => a.href || a.getAttribute('href') || '');
+                        for (let link of links) {
+                            let match = link.match(/\/question\/\d+\/answer\/(\d+)/);
+                            if (match) return match[1];
+                        }
+                        return null;
+                    }""")
                     
-                    target_id = None
-                    
-                    for href in hrefs:
-                        # 仅匹配回答 (Answer)
-                        ans_match = re.search(r"/question/\d+/answer/(\d+)", href)
-                        if ans_match:
-                            target_id = ans_match.group(1)
-                            break
-                    
-                    # 2. 如果成功提取到回答 ID，向知乎官方发起 API 请求
+                    # 2. 如果成功提取到回答 ID，发起与成功脚本完全一致的 API 请求
                     if target_id:
-                        print(f"   📡 识别为“回答”，提取到 ID [{target_id}]，发起评论 API 请求...")
+                        print(f"   📡 识别为“回答”，提取到 ID [{target_id}]，发起 API 请求...")
                         
                         api_url = f"https://www.zhihu.com/api/v4/answers/{target_id}/root_comments?limit=15&offset=0&order=normal&status=open"
                         
-                        # 巧妙利用 Playwright 携带当前 Cookie 状态直接发请求
+                        # 完美复用成功脚本的请求头
                         api_response = page.context.request.get(
                             api_url,
                             headers={
-                                "accept": "application/json",
+                                "accept": "application/json, text/plain, */*",
                                 "x-requested-with": "fetch",
                                 "referer": page.url,
                             }
@@ -237,7 +248,7 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                                     # 提取作者
                                     author_info = c.get("author") or {}
                                     member_info = author_info.get("member") or {}
-                                    author_name = member_info.get("name") or author_info.get("name") or "匿名用户"
+                                    author_name = member_info.get("name") or author_info.get("name") or c.get("author_name") or "匿名用户"
                                     
                                     # 提取评论内容并用正则清洗 HTML 标签
                                     raw_content = c.get("content") or c.get("comment") or c.get("text") or ""
@@ -255,7 +266,7 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                         else:
                             print(f"   ❌ API 请求被拒: HTTP {api_response.status}")
                     else:
-                        print("   ⏭️ 当前动态非“回答”（可能是文章或想法），按设定跳过评论提取。")
+                        print("   ⏭️ 当前动态非“回答”，跳过评论提取。")
                         
                 except Exception as e:
                     print(f"   ⚠️ 评论提取发生异常: {str(e)[:60]}")
