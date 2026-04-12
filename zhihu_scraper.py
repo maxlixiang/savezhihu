@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 from playwright.sync_api import sync_playwright
 
-# 🌟 终极 Debug 技巧：强制刷新所有 print 输出，防止 Docker 吞弃日志
+# 🌟 强制刷新所有 print 输出，防止 Docker 吞弃日志
 def print(*args, **kwargs):
     kwargs['flush'] = True
     builtins.print(*args, **kwargs)
@@ -195,43 +195,27 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                     raw_md = f"【⚠️ 正文提取失败】{str(e)[:40]}"
 
                 # ==========================================
-                # 🌟 核心重构：静态 ID 提取 + 原生 API 请求
+                # 🌟 核心重构（收窄范围）：仅针对“回答”请求 API
                 # ==========================================
                 comments_md_text = ""
                 try:
-                    # 1. 解析卡片中的所有链接，提取资源类型和 ID
+                    # 1. 解析卡片中的所有链接，专门寻找“回答”的 ID
                     hrefs = item.evaluate("""(node) => Array.from(node.querySelectorAll('a[href]')).map(el => el.href || '')""")
                     
                     target_id = None
-                    target_type = None # answers, articles, pins
                     
                     for href in hrefs:
-                        # 匹配回答 (Answer)
+                        # 仅匹配回答 (Answer)
                         ans_match = re.search(r"/question/\d+/answer/(\d+)", href)
                         if ans_match:
                             target_id = ans_match.group(1)
-                            target_type = "answers"
-                            break
-                        
-                        # 匹配文章 (Article)
-                        art_match = re.search(r"/p/(\d+)", href)
-                        if art_match:
-                            target_id = art_match.group(1)
-                            target_type = "articles"
-                            break
-                            
-                        # 匹配想法 (Pin)
-                        pin_match = re.search(r"/pin/(\d+)", href)
-                        if pin_match:
-                            target_id = pin_match.group(1)
-                            target_type = "pins"
                             break
                     
-                    # 2. 如果成功提取到 ID，向知乎官方发起 API 请求
-                    if target_id and target_type:
-                        print(f"   📡 成功提取到资源特征 [{target_type}: {target_id}]，发起 API 请求...")
+                    # 2. 如果成功提取到回答 ID，向知乎官方发起 API 请求
+                    if target_id:
+                        print(f"   📡 识别为“回答”，提取到 ID [{target_id}]，发起评论 API 请求...")
                         
-                        api_url = f"https://www.zhihu.com/api/v4/{target_type}/{target_id}/root_comments?limit=15&offset=0&order=normal&status=open"
+                        api_url = f"https://www.zhihu.com/api/v4/answers/{target_id}/root_comments?limit=15&offset=0&order=normal&status=open"
                         
                         # 巧妙利用 Playwright 携带当前 Cookie 状态直接发请求
                         api_response = page.context.request.get(
@@ -255,7 +239,7 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                                     member_info = author_info.get("member") or {}
                                     author_name = member_info.get("name") or author_info.get("name") or "匿名用户"
                                     
-                                    # 提取评论内容并用正则脱壳
+                                    # 提取评论内容并用正则清洗 HTML 标签
                                     raw_content = c.get("content") or c.get("comment") or c.get("text") or ""
                                     clean_content = clean_html_text(str(raw_content))
                                     
@@ -267,14 +251,14 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                                         
                                 print(f"   🎉 完美解析了 {added_count} 条评论！")
                             else:
-                                print("   ⚠️ 接口调用成功，但该内容目前 0 评论。")
+                                print("   ⚠️ 接口调用成功，但该回答目前 0 评论。")
                         else:
                             print(f"   ❌ API 请求被拒: HTTP {api_response.status}")
                     else:
-                        print("   ⚠️ 未能从卡片中解析出资源 ID，跳过评论抓取。")
+                        print("   ⏭️ 当前动态非“回答”（可能是文章或想法），按设定跳过评论提取。")
                         
                 except Exception as e:
-                    print(f"   ⚠️ API 评论提取发生异常: {str(e)[:60]}")
+                    print(f"   ⚠️ 评论提取发生异常: {str(e)[:60]}")
                 # ==========================================
 
                 # 拼接并下载图片
