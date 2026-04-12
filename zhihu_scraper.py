@@ -5,12 +5,13 @@ import requests
 import random
 import sqlite3
 import builtins
+import html
 from urllib.parse import quote
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 from playwright.sync_api import sync_playwright
 
-# 🌟 强制刷新日志输出
+# 🌟 终极 Debug 技巧：强制刷新所有 print 输出，防止 Docker 吞弃日志
 def print(*args, **kwargs):
     kwargs['flush'] = True
     builtins.print(*args, **kwargs)
@@ -30,6 +31,7 @@ headers = {
     "Referer": "https://www.zhihu.com/"
 }
 
+# --- 数据库操作 ---
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -52,16 +54,24 @@ def save_article_to_db(title):
     conn.commit()
     conn.close()
 
+# --- 文本与图片处理 ---
 def clean_file_name(title):
     illegal_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '，', '。', '\n', '\r']
     for char in illegal_chars: title = title.replace(char, "")
     return title.strip()[:60]
+
+def clean_html_text(value: str) -> str:
+    """清洗评论区的 HTML 标签"""
+    text = re.sub(r"<br\s*/?>", "\n", value, flags=re.IGNORECASE)
+    text = BeautifulSoup(text, "html.parser").get_text(separator="")
+    return html.unescape(text).strip()
 
 def download_img_and_replace_md_link(md_content, article_title):
     img_sub_dir = f"{clean_file_name(article_title)}_图片"
     img_save_path = os.path.join(MAIN_SAVE_DIR, img_sub_dir)
     img_pattern = re.compile(r"!\[(.*?)\]\((https?://.*?)\)")
     all_img = img_pattern.findall(md_content)
+    
     if not all_img: return md_content
     if not os.path.exists(img_save_path): os.makedirs(img_save_path)
 
@@ -83,6 +93,7 @@ def download_img_and_replace_md_link(md_content, article_title):
         except: continue
     return md_content
 
+
 def run_zhihu_scraper(limit=20, progress_callback=None): 
     init_db()
     newly_scraped_titles = []
@@ -101,25 +112,6 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
             timezone_id="Asia/Shanghai" 
         )
         page = context.new_page()
-
-        # ==========================================
-        # 🚨 开启“上帝模式”：全局 API 网络拦截器
-        # ==========================================
-        intercepted_comments = []
-        
-        def handle_response(response):
-            # 监听所有包含 "api/v4" 和 "comments" 的网络返回包
-            if "api/v4" in response.url and "comments" in response.url and response.request.method == "GET":
-                if response.status == 200:
-                    try:
-                        data = response.json()
-                        if "data" in data and isinstance(data["data"], list):
-                            intercepted_comments.append(data["data"])
-                    except Exception:
-                        pass
-                        
-        page.on("response", handle_response)
-        # ==========================================
 
         print("👉 [Scraper] 访问知乎主页...")
         try:
@@ -150,6 +142,7 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
 
                 if not any(kw in action_text for kw in ["赞同", "发布", "发表"]): continue
 
+                # 提取时间和标题
                 try:
                     time_match = re.search(r"(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2})", meta_text)
                     time_str = f"[{time_match.group(1)}_{time_match.group(2).replace(':', '-')}]" if time_match else f"[{int(time.time())}]"
@@ -187,7 +180,7 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                 item.scroll_into_view_if_needed()
                 time.sleep(random.uniform(0.5, 1.2))
 
-                # === 展开正文 ===
+                # === 提取正文 Markdown ===
                 expand_btn = item.locator('button:has-text("阅读全文"), button:has-text("展开全文")')
                 if expand_btn.count() > 0:
                     try:
@@ -202,67 +195,89 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                     raw_md = f"【⚠️ 正文提取失败】{str(e)[:40]}"
 
                 # ==========================================
-                # 🌟 从底层 API 提取评论 (降维打击)
+                # 🌟 核心重构：静态 ID 提取 + 原生 API 请求
                 # ==========================================
                 comments_md_text = ""
                 try:
-                    # 定位评论按钮
-                    comment_btn = item.locator('button, [role="button"]').filter(has_text=re.compile(r"\d+\s*条评论|添加评论")).filter(visible=True).first
-                    if comment_btn.count() > 0:
-                        print("   💬 找到可见评论按钮，准备拦截网络请求...")
-                        # 每次点击前清空拦截池
-                        intercepted_comments.clear()
+                    # 1. 解析卡片中的所有链接，提取资源类型和 ID
+                    hrefs = item.evaluate("""(node) => Array.from(node.querySelectorAll('a[href]')).map(el => el.href || '')""")
+                    
+                    target_id = None
+                    target_type = None # answers, articles, pins
+                    
+                    for href in hrefs:
+                        # 匹配回答 (Answer)
+                        ans_match = re.search(r"/question/\d+/answer/(\d+)", href)
+                        if ans_match:
+                            target_id = ans_match.group(1)
+                            target_type = "answers"
+                            break
                         
-                        # 使用 JS 强制点击（不会触发跳转）
-                        comment_btn.evaluate("node => node.click()")
+                        # 匹配文章 (Article)
+                        art_match = re.search(r"/p/(\d+)", href)
+                        if art_match:
+                            target_id = art_match.group(1)
+                            target_type = "articles"
+                            break
+                            
+                        # 匹配想法 (Pin)
+                        pin_match = re.search(r"/pin/(\d+)", href)
+                        if pin_match:
+                            target_id = pin_match.group(1)
+                            target_type = "pins"
+                            break
+                    
+                    # 2. 如果成功提取到 ID，向知乎官方发起 API 请求
+                    if target_id and target_type:
+                        print(f"   📡 成功提取到资源特征 [{target_type}: {target_id}]，发起 API 请求...")
                         
-                        print("   📡 正在半空中截停知乎官方评论数据...")
-                        # 轮询等待接口返回数据（最多等 4 秒）
-                        wait_time = 0
-                        while wait_time < 4.0:
-                            if len(intercepted_comments) > 0:
-                                break
-                            time.sleep(0.5)
-                            wait_time += 0.5
-                            
-                        # 如果拦截池里有数据，直接剥离 JSON
-                        if intercepted_comments:
-                            print("   ✅ 成功截获纯净 JSON 数据！开始脱壳排版...")
-                            comments_md_text += "\n\n---\n### 💬 精选评论 (第一页)\n\n"
-                            added_count = 0
-                            
-                            # 获取第一页数据
-                            first_page_data = intercepted_comments[0] 
-                            limit_cmts = min(len(first_page_data), 15) # 最多取 15 条
-                            
-                            for c in first_page_data[:limit_cmts]:
-                                # 提取作者
-                                c_author = c.get("author", {}).get("member", {}).get("name", "匿名用户")
+                        api_url = f"https://www.zhihu.com/api/v4/{target_type}/{target_id}/root_comments?limit=15&offset=0&order=normal&status=open"
+                        
+                        # 巧妙利用 Playwright 携带当前 Cookie 状态直接发请求
+                        api_response = page.context.request.get(
+                            api_url,
+                            headers={
+                                "accept": "application/json",
+                                "x-requested-with": "fetch",
+                                "referer": page.url,
+                            }
+                        )
+                        
+                        if api_response.ok:
+                            data = api_response.json().get("data", [])
+                            if data:
+                                comments_md_text += "\n\n---\n### 💬 精选评论 (第一页)\n\n"
+                                added_count = 0
                                 
-                                # 提取内容并清洗 HTML 标签
-                                raw_html = c.get("content", "")
-                                if raw_html:
-                                    c_content = BeautifulSoup(raw_html, "html.parser").get_text(separator="\n").strip()
-                                    if c_content and "已删除" not in c_content:
-                                        c_content = c_content.replace('\n', '\n> ')
-                                        comments_md_text += f"> **{c_author}**：{c_content}\n>\n"
+                                for c in data:
+                                    # 提取作者
+                                    author_info = c.get("author") or {}
+                                    member_info = author_info.get("member") or {}
+                                    author_name = member_info.get("name") or author_info.get("name") or "匿名用户"
+                                    
+                                    # 提取评论内容并用正则脱壳
+                                    raw_content = c.get("content") or c.get("comment") or c.get("text") or ""
+                                    clean_content = clean_html_text(str(raw_content))
+                                    
+                                    if clean_content and "已删除" not in clean_content:
+                                        # 转化为 Markdown 引用语法
+                                        clean_content = clean_content.replace('\n', '\n> ')
+                                        comments_md_text += f"> **{author_name}**：{clean_content}\n>\n"
                                         added_count += 1
                                         
-                            print(f"   🎉 完美解析了 {added_count} 条评论！")
-                            
-                            # 抓完后再次点击按钮，收起评论区，保持整洁
-                            try:
-                                comment_btn.evaluate("node => node.click()")
-                                time.sleep(0.5)
-                            except: pass
+                                print(f"   🎉 完美解析了 {added_count} 条评论！")
+                            else:
+                                print("   ⚠️ 接口调用成功，但该内容目前 0 评论。")
                         else:
-                            print("   ⚠️ 拦截 4 秒未收到数据，可能是网络超时或0评论。")
+                            print(f"   ❌ API 请求被拒: HTTP {api_response.status}")
                     else:
-                        print("   💬 当前卡片未发现评论按钮。")
+                        print("   ⚠️ 未能从卡片中解析出资源 ID，跳过评论抓取。")
+                        
                 except Exception as e:
-                    print(f"   ⚠️ API 拦截处理异常: {str(e)[:60]}")
+                    print(f"   ⚠️ API 评论提取发生异常: {str(e)[:60]}")
                 # ==========================================
 
+                # 拼接并下载图片
                 final_md = download_img_and_replace_md_link(raw_md, clean_title_str)
                 final_md += comments_md_text
 
