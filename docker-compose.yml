@@ -8,3 +8,4 @@ services:
     volumes:
       - ./save_zhihu_activity:/app/save_zhihu_activity
       - ./zhihu_articles.db:/app/zhihu_articles.db
+      - ./state.json:/app/state.json:ro

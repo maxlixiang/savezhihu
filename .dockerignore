@@ -1,0 +1,10 @@
+.git
+__pycache__/
+*.pyc
+
+.env
+state.json
+zhihu_articles.db
+save_zhihu_activity/
+
+*.log
