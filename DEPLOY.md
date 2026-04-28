@@ -154,6 +154,14 @@ git -C /root/zhihu_data/save_zhihu_activity status --short --branch
 find /root/zhihu_data/save_zhihu_activity/2026 -maxdepth 2 -type f | tail
 ```
 
+Check runtime status:
+
+```text
+/status
+```
+
+The bot replies with container uptime, last scrape time, archive path, Git cleanliness, and database size.
+
 ## 9. Common Operations
 
 View logs:
@@ -364,6 +372,14 @@ ZH_DB_FILE=/app/zhihu_articles.db
 git -C /root/zhihu_data/save_zhihu_activity status --short --branch
 find /root/zhihu_data/save_zhihu_activity/2026 -maxdepth 2 -type f | tail
 ```
+
+查看运行状态：
+
+```text
+/status
+```
+
+机器人会返回容器运行时间、最近一次抓取时间、数据仓库路径、Git 状态和数据库大小。
 
 ## 9. 常用维护命令
 

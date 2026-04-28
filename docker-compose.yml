@@ -13,3 +13,9 @@ services:
       - /root/zhihu_data/save_zhihu_activity:/app/save_zhihu_activity
       - /root/zhihu_data/zhihu_articles.db:/app/zhihu_articles.db
       - ./state.json:/app/state.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os,sys; ok=os.path.exists('/app/state.json') and os.path.isdir('/app/save_zhihu_activity/.git') and os.path.exists('/app/zhihu_articles.db'); sys.exit(0 if ok else 1)\""]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
