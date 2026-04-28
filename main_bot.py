@@ -71,6 +71,7 @@ def execute_scrape_task(is_manual=False):
             
             # 🌟 核心：抓取完成后，触发同步 GitHub
             bot.send_message(TG_CHAT_ID, "🔄 正在将新增文章自动推送到 GitHub...")
+            is_pushed = sync_to_github()
             if is_pushed:
                 # 顺手把这里的 ** 删掉，纯文本下它会直接显示出来
                 msg += "\n\n✅ 已成功同步到 GitHub 仓库！" 
@@ -78,8 +79,6 @@ def execute_scrape_task(is_manual=False):
                 msg += "\n\n⚠️ 文件已保存，但同步 GitHub 失败，请检查容器日志。"
                 
         bot.send_message(TG_CHAT_ID, msg)  # 🌟 核心修复：彻底删掉 parse_mode 参数！
-                
-        bot.send_message(TG_CHAT_ID, msg, parse_mode="Markdown")
     except Exception as e:
         bot.send_message(TG_CHAT_ID, f"⚠️ 抓取过程中发生崩溃：\n{str(e)}")
 
