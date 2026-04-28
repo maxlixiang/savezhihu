@@ -83,6 +83,13 @@ docker run -d --name zhihu_bot \
 
 定时任务：程序内部已设定在每天北京时间 03:00 自动执行一次增量抓取和推送，无需任何人工干预。
 
+本地调试评论抓取：
+
+Bash
+python zhihu_scraper.py --debug-comments
+
+该模式只读取知乎主页第一条动态，打印标题、正文、answer_id 与第一页评论；不会写入 SQLite、不会生成 Markdown 文件，也不会执行 Git 推送。
+
 🛠️ 常见维护
 查看运行日志：
 
