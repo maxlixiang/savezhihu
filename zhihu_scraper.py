@@ -33,11 +33,7 @@ USER_ID = "li-xiang-57-76"
 AUTHOR_NAME = "Juan"
 DB_FILE = "zhihu_articles.db"
 
-current_year = time.strftime("%Y")
-MAIN_SAVE_DIR = os.path.join("save_zhihu_activity", current_year)
-
-if not os.path.exists(MAIN_SAVE_DIR):
-    os.makedirs(MAIN_SAVE_DIR)
+ARCHIVE_ROOT_DIR = "save_zhihu_activity"
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -72,6 +68,17 @@ def clean_file_name(title):
     illegal_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '，', '。', '\n', '\r']
     for char in illegal_chars: title = title.replace(char, "")
     return title.strip()[:60]
+
+def get_save_dir_from_time_str(time_str: str) -> str:
+    match = re.match(r"\[(\d{4})-(\d{2})-\d{2}_\d{2}-\d{2}\]", time_str)
+    if match:
+        year, month = match.groups()
+    else:
+        year, month = time.strftime("%Y"), time.strftime("%m")
+
+    save_dir = os.path.join(ARCHIVE_ROOT_DIR, year, month)
+    os.makedirs(save_dir, exist_ok=True)
+    return save_dir
 
 # 🌟 完全采用你验证过的纯净正则清洗方案
 def clean_html_text(value: str) -> str:
@@ -333,9 +340,9 @@ def run_debug_comments():
             context.close()
             browser.close()
 
-def download_img_and_replace_md_link(md_content, article_title):
+def download_img_and_replace_md_link(md_content, article_title, save_dir):
     img_sub_dir = f"{clean_file_name(article_title)}_图片"
-    img_save_path = os.path.join(MAIN_SAVE_DIR, img_sub_dir)
+    img_save_path = os.path.join(save_dir, img_sub_dir)
     img_pattern = re.compile(r"!\[(.*?)\]\((https?://.*?)\)")
     all_img = img_pattern.findall(md_content)
     
@@ -432,6 +439,7 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                     except: title = "无标题内容"
 
                 clean_title_str = clean_file_name(f"{time_str} {title}")
+                save_dir = get_save_dir_from_time_str(time_str)
 
                 if is_article_exists(clean_title_str):
                     consecutive_exists_count += 1
@@ -485,10 +493,10 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                 # ==========================================
 
                 # 拼接并下载图片
-                final_md = download_img_and_replace_md_link(raw_md, clean_title_str)
+                final_md = download_img_and_replace_md_link(raw_md, clean_title_str, save_dir)
                 final_md += comments_md_text
 
-                md_file_path = os.path.join(MAIN_SAVE_DIR, f"{clean_title_str}.md")
+                md_file_path = os.path.join(save_dir, f"{clean_title_str}.md")
                 with open(md_file_path, "w", encoding="utf-8") as f:
                     f.write(f"# {title}\n\n---\n\n{final_md}")  
 
