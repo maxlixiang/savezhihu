@@ -4,6 +4,7 @@ import schedule
 import time
 import threading
 import subprocess # 🌟 新增：用于执行终端命令
+from urllib.parse import quote
 from dotenv import load_dotenv
 from zhihu_scraper import run_zhihu_scraper
 
@@ -11,6 +12,8 @@ load_dotenv()
 
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY", "maxlixiang/save_zhihu_activity")
 LIMIT_PER_RUN = 20
 
 if not TG_BOT_TOKEN or not TG_CHAT_ID:
@@ -30,7 +33,12 @@ def sync_to_github():
         if status.stdout.strip(): # 有新文件才提交
             commit_msg = f"🤖 Auto sync {time.strftime('%Y-%m-%d %H:%M')}"
             subprocess.run(["git", "commit", "-m", commit_msg], cwd=repo_path, check=True)
-            subprocess.run(["git", "push"], cwd=repo_path, check=True)
+            if GITHUB_TOKEN:
+                safe_token = quote(GITHUB_TOKEN, safe="")
+                push_url = f"https://x-access-token:{safe_token}@github.com/{GITHUB_REPOSITORY}.git"
+                subprocess.run(["git", "push", push_url, "HEAD:main"], cwd=repo_path, check=True)
+            else:
+                subprocess.run(["git", "push"], cwd=repo_path, check=True)
             return True
         return False
     except Exception as e:
