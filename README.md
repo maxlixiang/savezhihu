@@ -1,112 +1,225 @@
-📦 Zhihu Activity Archiver (知乎动态自动化归档机器人)
-这是一个基于 Playwright 和 Docker 构建的企业级自动化数据流水线工具。它可以全自动监控你的知乎个人动态（赞同、发布、想法），提取高质量的 Markdown 正文及第一页精选评论，并自动推送到指定的 GitHub 仓库进行永久归档。
+# Zhihu Activity Archiver
 
-同时，该服务集成了 Telegram 机器人，支持实时进度监控、手动触发以及每日定时增量抓取。
+知乎动态自动化归档机器人。它会抓取指定知乎主页的最新动态，提取正文、第一页评论和图片资源，保存为 Markdown，并自动同步到 GitHub 数据仓库。
 
-✨ 核心特性
-🤖 深度防反爬：基于 Playwright 无头浏览器和 state.json 持久化凭证，模拟真实人类行为。
+项目同时内置 Telegram 机器人，支持手动触发、定时抓取、运行状态查看、统计查询和部署自检。
 
-📡 API 降维拦截：独创的底层网络数据包拦截技术，无视前端 UI 遮挡与弹窗，精准提取评论区原生 JSON 数据并转化为 Markdown 引用排版。
+## 功能概览
 
-🗄️ 数据库去重：内置 SQLite (zhihu_articles.db)，精准记录历史抓取轨迹，确保增量抓取绝不重复。
+- 抓取知乎个人主页动态，包括赞同、发布、发表等活动。
+- 提取回答正文，并通过知乎评论 API 抓取第一页评论。
+- 自动下载正文图片，保存到对应文章的 `_图片` 目录。
+- 按 `YYYY/MM/` 结构归档 Markdown 文件。
+- 使用 SQLite 记录已抓取文章，避免重复抓取。
+- 抓取完成后自动 `git add/commit/push` 到归档仓库。
+- 通过 Telegram 命令控制和查看运行状态。
+- 支持 Docker Compose 部署，程序代码和归档数据分离。
 
-🖼️ 完美 Obsidian 兼容：自动下载网页图片到本地，并使用标准的相对路径和 URL 编码替换，完美适配 Obsidian 知识库展示。
+## 目录结构
 
-☁️ 全自动 Git 闭环：抓取完成后，自动执行 git add/commit/push，将数据无缝同步至专属数据仓库。
-
-📱 Telegram 监控终端：支持 /latest 命令实时触发，提供带有可视化进度条的动态运行报告。
-
-🐳 现代化 Docker 部署：彻底隔离环境依赖，解决 Linux 时区与中文字体问题，支持断线自动重启（7x24小时守护）。
-
-📂 目录结构
-Plaintext
+```text
 savezhihu/
-├── zhihu_scraper.py      # 核心爬虫模块（含 DOM 解析与 API 拦截提取逻辑）
-├── main_bot.py           # 主程序入口（Telegram 机器人调度与 Git 自动同步）
-├── init_login.py         # 辅助脚本：用于在本地有图形界面的电脑上生成知乎登录凭证
-├── Dockerfile            # Docker 镜像构建脚本（基于官方 Playwright 镜像优化）
-├── requirements.txt      # Python 依赖清单
-├── .gitignore            # Git 忽略配置（保护敏感文件）
-├── .env                  # [需手动创建] 环境变量配置（TG 密钥等）
-├── state.json            # [需手动生成] 知乎登录 Cookie 持久化状态
-└── zhihu_articles.db     # [自动生成/需上传历史库] SQLite 去重数据库
-🚀 极速部署指南 (VPS 环境)
-更完整、适合迁移到新 VPS 的部署清单请见 [DEPLOY.md](DEPLOY.md)。
+├── main_bot.py           # Telegram 机器人、定时任务、GitHub 同步
+├── zhihu_scraper.py      # 知乎动态抓取、正文/评论/图片提取
+├── init_login.py         # 本地生成知乎登录 state.json
+├── docker-compose.yml    # Docker Compose 部署配置
+├── Dockerfile            # Docker 镜像构建文件
+├── requirements.txt      # Python 依赖
+├── .env.example          # 环境变量模板
+├── .dockerignore         # Docker 构建排除规则
+├── DEPLOY.md             # 完整部署和迁移指南
+└── README.md
+```
 
-1. 准备工作
-在开始部署前，请确保你已经准备好以下信息与文件：
+推荐的 VPS 数据目录：
 
-一台已安装 Docker 和 Git 的 Linux VPS。
+```text
+/root/savezhihu/                         # 主程序
+/root/zhihu_data/save_zhihu_activity/    # Markdown 归档 Git 仓库
+/root/zhihu_data/zhihu_articles.db       # SQLite 去重数据库
+```
 
-GitHub PAT (Personal Access Token)：需开启 repo 权限。
+归档仓库结构：
 
-Telegram Bot Token 和你的 Chat ID。
+```text
+save_zhihu_activity/
+├── 2024/
+│   ├── 06/
+│   └── 07/
+├── 2025/
+└── 2026/
+    └── 04/
+```
 
-在本地电脑运行 init_login.py 生成的 state.json 文件。
+## 快速部署
 
-（可选）包含你历史文章记录的 zhihu_articles.db 文件。
+完整部署、迁移和恢复步骤请看 [DEPLOY.md](DEPLOY.md)。
 
-2. 克隆主程序仓库
-登录你的 VPS，在 /root 目录下执行：
+最小流程：
 
-Bash
+```bash
 cd /root
-git clone https://github.com/你的用户名/savezhihu.git
-cd savezhihu
-3. 配置敏感数据
-通过 SFTP 等工具，将你的 state.json 和 zhihu_articles.db 上传至 /root/savezhihu 目录。
-然后，在目录下新建 .env 文件，填入以下内容：
+git clone https://github.com/maxlixiang/savezhihu.git savezhihu
+cd /root/savezhihu
+cp .env.example .env
+```
 
-代码段
-TG_BOT_TOKEN=你的Telegram_Bot_Token
-TG_CHAT_ID=你的Telegram_Chat_ID
-4. 挂载数据仓库
-为了让容器能够自动推送 Markdown 文件，需使用包含 Token 的地址克隆你的目标数据仓库：
+准备数据目录：
 
-Bash
-# 请替换 <你的PAT> 和 <你的用户名>
-git clone https://<你的PAT>@github.com/<你的用户名>/save_zhihu_activity.git
-5. 构建与运行 Docker 容器
-Bash
-# 1. 构建镜像 (包含 Playwright 内核、中文字区配置与 Git)
-docker build -t zhihu-bot-image .
+```bash
+mkdir -p /root/zhihu_data
+cd /root/zhihu_data
+git clone https://github.com/maxlixiang/save_zhihu_activity.git
+```
 
-# 2. 启动守护容器
-docker run -d --name zhihu_bot \
-  --env-file .env \
-  -e TZ="Asia/Shanghai" \
-  -v "/root/savezhihu/save_zhihu_activity:/app/save_zhihu_activity" \
-  -v "/root/savezhihu/zhihu_articles.db:/app/zhihu_articles.db" \
-  --restart unless-stopped zhihu-bot-image
-🎮 使用方法
-部署成功后，打开你的 Telegram 找到对应的机器人：
+放置必要文件：
 
-手动触发：发送命令 /latest。机器人将立即唤醒爬虫，扫描最新动态，你可以在聊天窗口看到实时变动的进度条。
+```text
+/root/savezhihu/.env
+/root/savezhihu/state.json
+/root/zhihu_data/zhihu_articles.db
+```
 
-状态检查：发送命令 /status。机器人会返回容器运行时间、最近一次抓取时间、数据仓库路径、Git 状态和数据库大小。
+启动服务：
 
-统计查询：发送命令 /stats 查看当月每天抓取数；发送 /stats 2026-01 查看指定月份；发送 /stats 2026 查看指定年份每月统计。
+```bash
+cd /root/savezhihu
+docker compose up -d --build
+docker logs --tail 200 zhihu_bot
+```
 
-配置自检：发送命令 /check。机器人会检查 state.json、归档目录、Git 仓库、数据库和 GitHub token 配置。
+## 环境变量
 
-帮助信息：发送命令 /help 查看完整命令说明。
+从 `.env.example` 复制生成 `.env`：
 
-定时任务：程序内部已设定在每天北京时间 03:00 自动执行一次增量抓取和推送，无需任何人工干预。
+```env
+TG_BOT_TOKEN=
+TG_CHAT_ID=
+GITHUB_TOKEN=
+GITHUB_REPOSITORY=maxlixiang/save_zhihu_activity
+ARCHIVE_ROOT_DIR=/app/save_zhihu_activity
+GITHUB_REPO_PATH=/app/save_zhihu_activity
+ZH_DB_FILE=/app/zhihu_articles.db
+```
 
-本地调试评论抓取：
+说明：
 
-Bash
+- `TG_BOT_TOKEN`：Telegram Bot Token。
+- `TG_CHAT_ID`：接收通知的 Telegram Chat ID。
+- `GITHUB_TOKEN`：有归档仓库写权限的 GitHub PAT。
+- `GITHUB_REPOSITORY`：归档仓库名，默认 `maxlixiang/save_zhihu_activity`。
+- `ARCHIVE_ROOT_DIR`：容器内 Markdown 归档路径。
+- `GITHUB_REPO_PATH`：容器内执行 Git 同步的仓库路径。
+- `ZH_DB_FILE`：容器内 SQLite 数据库路径。
+
+不要提交真实 `.env`、`state.json` 或 `zhihu_articles.db`。
+
+## Telegram 命令
+
+```text
+/latest
+```
+
+立即执行一次增量抓取。抓取成功后会保存 Markdown，并推送到 GitHub。
+
+```text
+/status
+```
+
+查看容器运行时间、最近一次抓取时间、最近抓取结果、数据仓库路径、Git 状态和数据库大小。
+
+```text
+/stats
+/stats 2026-01
+/stats 2026
+```
+
+查看抓取统计：
+
+- `/stats`：默认统计当月每天抓取数。
+- `/stats YYYY-MM`：统计指定月份每天抓取数。
+- `/stats YYYY`：统计指定年份每月抓取数。
+
+```text
+/check
+```
+
+执行配置自检，检查 `state.json`、归档目录、Git 仓库、数据库路径和 GitHub token 配置。
+
+```text
+/help
+```
+
+查看完整命令说明。
+
+## 本地调试
+
+只测试第一条动态的正文和评论，不写数据库、不保存 Markdown、不推 GitHub：
+
+```bash
 python zhihu_scraper.py --debug-comments
+```
 
-该模式只读取知乎主页第一条动态，打印标题、正文、answer_id 与第一页评论；不会写入 SQLite、不会生成 Markdown 文件，也不会执行 Git 推送。
+正常抓取指定数量的新动态：
 
-🛠️ 常见维护
-查看运行日志：
+```bash
+python zhihu_scraper.py --limit 5
+```
 
-Bash
+## 维护命令
+
+查看日志：
+
+```bash
 docker logs -f zhihu_bot
-知乎 Cookie 过期怎么办？
-通常几个月后知乎可能会要求重新登录。此时只需在本地重新运行 init_login.py，将生成的新 state.json 覆盖 VPS 上的旧文件，并执行 docker restart zhihu_bot 即可。
+```
 
-⚠️ 免责声明
-本工具仅供个人学习与数据备份使用。请合理设置抓取频率（代码默认单次限制 20 篇），避免对知乎服务器造成过大压力。严禁用于任何商业或破坏性用途。
+重建容器：
+
+```bash
+cd /root/savezhihu
+docker compose up -d --build
+```
+
+检查容器内挂载：
+
+```bash
+docker exec -it zhihu_bot env | grep -E "ARCHIVE_ROOT_DIR|GITHUB_REPO_PATH|ZH_DB_FILE"
+docker exec -it zhihu_bot git -C /app/save_zhihu_activity status --short --branch
+docker exec -it zhihu_bot test -f /app/state.json && echo "state.json OK"
+```
+
+VPS 磁盘紧张时清理 Docker 构建缓存：
+
+```bash
+docker builder prune -f
+docker system df
+```
+
+## 已知限制
+
+当前 SQLite 去重键由“动态时间 + 标题”生成。对于回答动态，标题通常是问题标题，所以同一个问题下的不同回答一般会因为动态时间不同而被识别为不同文章。
+
+极小概率情况下，如果同一个问题下的不同回答在主页动态里显示为同一分钟，且标题完全相同，可能被误判为已抓取。后续如果遇到类似漏抓，可将去重键升级为优先使用 `answer_id`。
+
+## 迁移重点
+
+迁移到新 VPS 时，重点备份：
+
+```text
+/root/savezhihu/.env
+/root/savezhihu/state.json
+/root/zhihu_data/zhihu_articles.db
+```
+
+Markdown 归档可以从 GitHub 重新 clone：
+
+```bash
+git clone https://github.com/maxlixiang/save_zhihu_activity.git /root/zhihu_data/save_zhihu_activity
+```
+
+更完整的迁移步骤见 [DEPLOY.md](DEPLOY.md)。
+
+## 免责声明
+
+本工具仅供个人学习与数据备份使用。请合理设置抓取频率，避免对知乎服务器造成过大压力。严禁用于商业用途或破坏性用途。
