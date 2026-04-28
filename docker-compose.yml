@@ -1,0 +1,10 @@
+services:
+  zhihu_bot:
+    build: .
+    container_name: zhihu_bot
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./save_zhihu_activity:/app/save_zhihu_activity
+      - ./zhihu_articles.db:/app/zhihu_articles.db
