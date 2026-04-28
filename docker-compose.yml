@@ -5,7 +5,11 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      ARCHIVE_ROOT_DIR: /app/save_zhihu_activity
+      GITHUB_REPO_PATH: /app/save_zhihu_activity
+      ZH_DB_FILE: /app/zhihu_articles.db
     volumes:
-      - ./save_zhihu_activity:/app/save_zhihu_activity
-      - ./zhihu_articles.db:/app/zhihu_articles.db
+      - /root/zhihu_data/save_zhihu_activity:/app/save_zhihu_activity
+      - /root/zhihu_data/zhihu_articles.db:/app/zhihu_articles.db
       - ./state.json:/app/state.json:ro

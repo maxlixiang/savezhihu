@@ -31,9 +31,9 @@ def print(*args, **kwargs):
 
 USER_ID = "li-xiang-57-76"
 AUTHOR_NAME = "Juan"
-DB_FILE = "zhihu_articles.db"
+DB_FILE = os.getenv("ZH_DB_FILE", "zhihu_articles.db")
 
-ARCHIVE_ROOT_DIR = "save_zhihu_activity"
+ARCHIVE_ROOT_DIR = os.getenv("ARCHIVE_ROOT_DIR", "save_zhihu_activity")
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

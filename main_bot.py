@@ -20,7 +20,7 @@ bot = telebot.TeleBot(TG_BOT_TOKEN)
 
 def sync_to_github():
     """🌟 新增：自动提交并推送到 GitHub"""
-    repo_path = "save_zhihu_activity"
+    repo_path = os.getenv("GITHUB_REPO_PATH", os.getenv("ARCHIVE_ROOT_DIR", "save_zhihu_activity"))
     try:
         subprocess.run(["git", "config", "--global", "user.email", "bot@github.com"], check=True)
         subprocess.run(["git", "config", "--global", "user.name", "ZhihuBot"], check=True)
