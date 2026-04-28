@@ -14,16 +14,91 @@ TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY", "maxlixiang/save_zhihu_activity")
+ARCHIVE_ROOT_DIR = os.getenv("ARCHIVE_ROOT_DIR", "save_zhihu_activity")
+GITHUB_REPO_PATH = os.getenv("GITHUB_REPO_PATH", ARCHIVE_ROOT_DIR)
+ZH_DB_FILE = os.getenv("ZH_DB_FILE", "zhihu_articles.db")
 LIMIT_PER_RUN = 20
 
 if not TG_BOT_TOKEN or not TG_CHAT_ID:
     raise ValueError("❌ 环境变量中缺失 TG_BOT_TOKEN 或 TG_CHAT_ID！")
 
+def mask_secret(value):
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}...{value[-4:]}"
+
+def run_git_check(repo_path, args):
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+def validate_runtime_environment():
+    """启动前自检，提前暴露迁移和挂载问题。"""
+    errors = []
+    warnings = []
+
+    print("🔎 启动前自检开始...")
+    print(f"   ARCHIVE_ROOT_DIR={ARCHIVE_ROOT_DIR}")
+    print(f"   GITHUB_REPO_PATH={GITHUB_REPO_PATH}")
+    print(f"   ZH_DB_FILE={ZH_DB_FILE}")
+    print(f"   GITHUB_REPOSITORY={GITHUB_REPOSITORY}")
+    print(f"   GITHUB_TOKEN={mask_secret(GITHUB_TOKEN) if GITHUB_TOKEN else '[未设置]'}")
+
+    if not os.path.exists("state.json"):
+        errors.append("缺少 state.json，知乎登录态不可用。")
+
+    if not os.path.isdir(ARCHIVE_ROOT_DIR):
+        errors.append(f"归档目录不存在或不是目录: {ARCHIVE_ROOT_DIR}")
+
+    if not os.path.isdir(GITHUB_REPO_PATH):
+        errors.append(f"Git 推送目录不存在或不是目录: {GITHUB_REPO_PATH}")
+    elif not os.path.isdir(os.path.join(GITHUB_REPO_PATH, ".git")):
+        errors.append(f"Git 推送目录不是 Git 仓库: {GITHUB_REPO_PATH}")
+    else:
+        status = run_git_check(GITHUB_REPO_PATH, ["status", "--porcelain"])
+        if status.returncode != 0:
+            errors.append(f"git status 失败: {(status.stderr or status.stdout).strip()}")
+
+        remote = run_git_check(GITHUB_REPO_PATH, ["remote", "get-url", "origin"])
+        if remote.returncode != 0:
+            errors.append(f"无法读取 Git origin remote: {(remote.stderr or remote.stdout).strip()}")
+        else:
+            remote_url = remote.stdout.strip()
+            print(f"   Git origin={remote_url.split('@github.com/')[-1] if '@github.com/' in remote_url else remote_url}")
+            if not GITHUB_TOKEN and remote_url.startswith("https://github.com/"):
+                warnings.append("未设置 GITHUB_TOKEN，且 origin 是普通 HTTPS URL；容器内 git push 可能无法认证。")
+
+    db_parent = os.path.dirname(os.path.abspath(ZH_DB_FILE)) or "."
+    if not os.path.isdir(db_parent):
+        errors.append(f"数据库目录不存在: {db_parent}")
+    elif os.path.exists(ZH_DB_FILE) and not os.access(ZH_DB_FILE, os.W_OK):
+        errors.append(f"数据库文件不可写: {ZH_DB_FILE}")
+    elif not os.path.exists(ZH_DB_FILE) and not os.access(db_parent, os.W_OK):
+        errors.append(f"数据库目录不可写，无法创建数据库: {db_parent}")
+
+    for warning in warnings:
+        print(f"⚠️ 自检警告: {warning}")
+
+    if errors:
+        for error in errors:
+            print(f"❌ 自检失败: {error}")
+        raise RuntimeError("启动前自检失败，请先修复上面的配置或挂载问题。")
+
+    print("✅ 启动前自检通过。")
+
+validate_runtime_environment()
+
 bot = telebot.TeleBot(TG_BOT_TOKEN)
 
 def sync_to_github():
     """🌟 新增：自动提交并推送到 GitHub"""
-    repo_path = os.getenv("GITHUB_REPO_PATH", os.getenv("ARCHIVE_ROOT_DIR", "save_zhihu_activity"))
+    repo_path = GITHUB_REPO_PATH
     try:
         subprocess.run(["git", "config", "--global", "user.email", "bot@github.com"], check=True)
         subprocess.run(["git", "config", "--global", "user.name", "ZhihuBot"], check=True)

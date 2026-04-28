@@ -31,6 +31,8 @@ savezhihu/
 ├── state.json            # [需手动生成] 知乎登录 Cookie 持久化状态
 └── zhihu_articles.db     # [自动生成/需上传历史库] SQLite 去重数据库
 🚀 极速部署指南 (VPS 环境)
+更完整、适合迁移到新 VPS 的部署清单请见 [DEPLOY.md](DEPLOY.md)。
+
 1. 准备工作
 在开始部署前，请确保你已经准备好以下信息与文件：
 
