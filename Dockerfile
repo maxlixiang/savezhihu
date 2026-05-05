@@ -11,5 +11,6 @@ ENV TZ="Asia/Shanghai"
 ENV PYTHONUNBUFFERED=1
 
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m playwright install chromium
 
 CMD ["python", "main_bot.py"]
