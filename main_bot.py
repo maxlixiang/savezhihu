@@ -258,7 +258,7 @@ def build_stats_report(arg_text=""):
         except Exception:
             pass
 
-        image_dir = os.path.splitext(path)[0] + "_图片"
+        image_dir = os.path.splitext(path)[0]
         if os.path.isdir(image_dir):
             with_images += 1
 

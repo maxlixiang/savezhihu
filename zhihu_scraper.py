@@ -64,10 +64,12 @@ def save_article_to_db(title):
     conn.close()
 
 # --- 文本与图片处理 ---
+MAX_FILE_NAME_LENGTH = 100
+
 def clean_file_name(title):
     illegal_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '，', '。', '\n', '\r']
     for char in illegal_chars: title = title.replace(char, "")
-    return title.strip()[:60]
+    return title.strip()[:MAX_FILE_NAME_LENGTH]
 
 def get_save_dir_from_time_str(time_str: str) -> str:
     match = re.match(r"\[(\d{4})-(\d{2})-\d{2}_\d{2}-\d{2}\]", time_str)
@@ -341,7 +343,7 @@ def run_debug_comments():
             browser.close()
 
 def download_img_and_replace_md_link(md_content, article_title, save_dir):
-    img_sub_dir = f"{clean_file_name(article_title)}_图片"
+    img_sub_dir = clean_file_name(article_title)
     img_save_path = os.path.join(save_dir, img_sub_dir)
     img_pattern = re.compile(r"!\[(.*?)\]\((https?://.*?)\)")
     all_img = img_pattern.findall(md_content)
