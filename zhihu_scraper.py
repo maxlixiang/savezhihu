@@ -8,6 +8,7 @@ import builtins
 import html
 import argparse
 import sys
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from playwright.sync_api import sync_playwright
 
@@ -90,6 +91,145 @@ def clean_html_text(value: str) -> str:
 
 def normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
+
+def normalize_source_url(url: str) -> str:
+    url = (url or "").strip()
+    if url.startswith("//"):
+        return f"https:{url}"
+    return url
+
+def clean_zhihu_time_text(value: str) -> str:
+    value = normalize_text(value)
+    if not value:
+        return ""
+    value = re.sub(r"^(发布于|编辑于)", "", value).strip()
+    match = re.search(r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?", value)
+    return match.group(0) if match else value
+
+def format_zhihu_iso_time(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        china_time = parsed.astimezone(timezone(timedelta(hours=8)))
+        return china_time.strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return value
+
+def yaml_quote(value: str) -> str:
+    value = "" if value is None else str(value)
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+def build_frontmatter(title: str, metadata: dict) -> str:
+    fields = {
+        "title": title,
+        "author": metadata.get("author", ""),
+        "published_at": metadata.get("published_at", ""),
+        "edited_at": metadata.get("edited_at", ""),
+        "source_url": metadata.get("source_url", ""),
+        "source_type": metadata.get("source_type", ""),
+        "zhihu_answer_id": metadata.get("answer_id", ""),
+        "archived_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    lines = ["---"]
+    for key, value in fields.items():
+        if value:
+            lines.append(f"{key}: {yaml_quote(value)}")
+    lines.append("---")
+    return "\n".join(lines)
+
+def extract_content_metadata(item):
+    data = item.evaluate(
+        """
+        (node) => {
+            const result = {
+                author: '',
+                published_at: '',
+                edited_at: '',
+                source_url: '',
+                source_type: '',
+                answer_id: '',
+                date_created: '',
+                date_modified: '',
+            };
+
+            const pickText = (selectors) => {
+                for (const selector of selectors) {
+                    const el = node.querySelector(selector);
+                    const text = el && (el.innerText || el.textContent || '').trim();
+                    if (text) return text;
+                }
+                return '';
+            };
+
+            const contentItem = node.querySelector('.ContentItem');
+            if (contentItem) {
+                const zopStr = contentItem.getAttribute('data-zop');
+                if (zopStr) {
+                    try {
+                        const zop = JSON.parse(zopStr);
+                        result.author = String(zop.authorName || zop.author_name || '');
+                        result.source_type = String(zop.type || '').toLowerCase();
+                        result.answer_id = String(zop.itemId || zop.item_id || zop.id || '');
+                    } catch (e) {}
+                }
+            }
+
+            if (!result.author) {
+                result.author = pickText([
+                    '.AuthorInfo-name',
+                    '.AuthorInfo .UserLink-link',
+                    '.ContentItem-meta .UserLink-link',
+                    'a[href*="/people/"]'
+                ]);
+            }
+
+            const timeLink = node.querySelector(
+                '.ContentItem-time a[href], a[data-tooltip*="发布于"][href], a[aria-label*="发布于"][href]'
+            );
+            if (timeLink) {
+                result.source_url = timeLink.href || timeLink.getAttribute('href') || '';
+                result.published_at = timeLink.getAttribute('data-tooltip')
+                    || timeLink.getAttribute('aria-label')
+                    || '';
+                result.edited_at = timeLink.innerText || timeLink.textContent || '';
+            }
+
+            const urlMeta = node.querySelector('meta[itemprop="url"]');
+            const createdMeta = node.querySelector('meta[itemprop="dateCreated"]');
+            const modifiedMeta = node.querySelector('meta[itemprop="dateModified"]');
+
+            if (!result.source_url && urlMeta) {
+                result.source_url = urlMeta.getAttribute('content') || '';
+            }
+            if (createdMeta) {
+                result.date_created = createdMeta.getAttribute('content') || '';
+            }
+            if (modifiedMeta) {
+                result.date_modified = modifiedMeta.getAttribute('content') || '';
+            }
+
+            return result;
+        }
+        """
+    )
+
+    published_at = clean_zhihu_time_text(data.get("published_at", ""))
+    edited_at = clean_zhihu_time_text(data.get("edited_at", ""))
+    if not published_at:
+        published_at = format_zhihu_iso_time(data.get("date_created", ""))
+    if not edited_at:
+        edited_at = format_zhihu_iso_time(data.get("date_modified", ""))
+
+    return {
+        "author": normalize_text(data.get("author", "")),
+        "published_at": published_at,
+        "edited_at": edited_at,
+        "source_url": normalize_source_url(data.get("source_url", "")),
+        "source_type": normalize_text(data.get("source_type", "")),
+        "answer_id": normalize_text(data.get("answer_id", "")),
+    }
 
 def extract_answer_id_from_item(item):
     hrefs = item.evaluate(
@@ -440,6 +580,7 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                         title = title_el.inner_text().strip() if title_el.count() > 0 else "无标题内容"
                     except: title = "无标题内容"
 
+                content_metadata = extract_content_metadata(item)
                 clean_title_str = clean_file_name(f"{time_str} {title}")
                 save_dir = get_save_dir_from_time_str(time_str)
 
@@ -499,8 +640,9 @@ def run_zhihu_scraper(limit=20, progress_callback=None):
                 final_md += comments_md_text
 
                 md_file_path = os.path.join(save_dir, f"{clean_title_str}.md")
+                frontmatter = build_frontmatter(title, content_metadata)
                 with open(md_file_path, "w", encoding="utf-8") as f:
-                    f.write(f"# {title}\n\n---\n\n{final_md}")  
+                    f.write(f"{frontmatter}\n\n# {title}\n\n---\n\n{final_md}")  
 
                 save_article_to_db(clean_title_str)
                 newly_scraped_titles.append(clean_title_str)
