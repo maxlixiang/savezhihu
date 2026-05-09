@@ -9,7 +9,7 @@
 ## 核心文件
 
 - `main_bot.py`：服务入口。负责加载环境变量、启动 Telegram Bot、注册命令、定时任务、运行前自检、调用爬虫、提交并推送归档仓库。
-- `zhihu_scraper.py`：知乎抓取核心。负责用 Playwright 加载知乎登录态、扫描活动列表、提取正文、提取回答 ID、调用评论 API、下载图片、写 Markdown、写 SQLite 去重记录。
+- `zhihu_scraper.py`：知乎抓取核心。负责用 Playwright 加载知乎登录态、扫描活动列表、提取正文、提取作者/发布时间/原文 URL 等表头信息、提取回答 ID、调用评论 API、下载图片、写 Markdown、写 SQLite 去重记录。
 - `init_login.py`：本地生成知乎登录态。会打开有界面 Chromium，等待手动登录 60 秒，然后把 Playwright storage state 保存到 `state.json`。
 - `docker-compose.yml`：生产部署编排。把归档 Git 仓库、SQLite 数据库和只读 `state.json` 挂载进容器。
 - `Dockerfile`：基于 Playwright Python 镜像构建，安装 Git、tzdata、Python 依赖和 Chromium。
@@ -70,13 +70,38 @@
 8. 用 `clean_file_name()` 清理文件名，并以清理后的完整标题作为 SQLite 去重主键。
 9. 若连续遇到 10 条以上已存在记录，则认为增量抓取结束。
 10. 展开“阅读全文”或“展开全文”，用 `markdownify` 把正文 HTML 转为 Markdown。
-11. 尝试从链接或 `data-zop` 中提取 `answer_id`。
-12. 如果能识别回答 ID，就请求知乎评论 API 的第一页 root comments，最多 15 条。
-13. 下载正文 Markdown 里的远程图片到同名子目录，并把图片链接替换为相对路径。
-14. 写入 `ARCHIVE_ROOT_DIR/YYYY/MM/[时间] 标题.md`。
-15. 把标题写入 SQLite，返回本轮新增标题列表。
+11. 从动态卡片底部的时间链接、`data-zop` 和 `meta[itemprop]` 中提取 Markdown 表头元信息。
+12. 尝试从链接或 `data-zop` 中提取 `answer_id`。
+13. 如果能识别回答 ID，就请求知乎评论 API 的第一页 root comments，最多 15 条。
+14. 下载正文 Markdown 里的远程图片到同名子目录，并把图片链接替换为相对路径。
+15. 写入 `ARCHIVE_ROOT_DIR/YYYY/MM/[时间] 标题.md`，文件开头包含 YAML front matter。
+16. 把标题写入 SQLite，返回本轮新增标题列表。
 
 归档文件目录由动态时间决定，格式是 `YYYY/MM/`。如果无法解析时间，则退回当前系统年月。
+
+## Markdown 表头
+
+新归档的 Markdown 文件会在正文前写入 YAML front matter，当前输出字段如下：
+
+```yaml
+---
+title: "文章标题"
+author: "作者名"
+published_at: "2026-05-09 00:37"
+source_url: "https://www.zhihu.com/question/.../answer/..."
+source_type: "answer"
+zhihu_answer_id: "2036243359497507510"
+---
+```
+
+字段来源：
+
+- `author`：优先取 `.ContentItem` 的 `data-zop.authorName`，失败时回退到 `.AuthorInfo-name`、`.UserLink-link` 等 DOM 节点。
+- `published_at`：优先取卡片底部时间链接的 `data-tooltip` 或 `aria-label` 中的“发布于 YYYY-MM-DD HH:MM”，失败时回退到 `meta[itemprop="dateCreated"]` 并转换为北京时间。
+- `source_url`：优先取同一个时间链接的 `href`，会把 `//www.zhihu.com/...` 规范化为 `https://www.zhihu.com/...`；失败时回退到 `meta[itemprop="url"]`。
+- `source_type` 和 `zhihu_answer_id`：来自 `data-zop.type` 和 `data-zop.itemId` 等字段。
+
+曾经考虑过写入 `edited_at` 和 `archived_at`，但当前不输出这两个字段。`edited_at` 是知乎编辑时间，`archived_at` 是程序本地保存时间；为了保持表头简洁，只保留更有检索价值的来源元数据。
 
 ## Telegram 命令
 
@@ -180,6 +205,7 @@ Markdown 归档数据可以从 GitHub 重新 clone。
 - `main_bot.py` 导入时会执行启动前自检并初始化 Telegram Bot；单元级调用其中函数时要注意环境变量和挂载路径。
 - `zhihu_scraper.py` 覆盖了内置 `print()`，强制 flush，并处理部分编码错误，这是为了 Docker 日志实时输出。
 - 抓取逻辑会真实访问知乎，依赖有效 `state.json`，也依赖网络和知乎风控状态。
+- Markdown 表头元信息依赖知乎卡片底部时间链接、`data-zop` 和 `meta[itemprop]`。如果知乎改版导致表头缺字段，优先检查 `extract_content_metadata()`。
 - 图片下载失败会被忽略并继续处理正文，不会中断整篇文章归档。
 - Git 同步失败不会回滚已保存的 Markdown 和数据库记录，Telegram 会提示“文件已保存但同步失败”。
 - 当前仓库根目录可能包含真实运行数据文件，改代码时不要误提交 `.env`、`state.json` 或 `zhihu_articles.db`。

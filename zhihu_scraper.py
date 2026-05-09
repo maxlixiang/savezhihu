@@ -126,11 +126,9 @@ def build_frontmatter(title: str, metadata: dict) -> str:
         "title": title,
         "author": metadata.get("author", ""),
         "published_at": metadata.get("published_at", ""),
-        "edited_at": metadata.get("edited_at", ""),
         "source_url": metadata.get("source_url", ""),
         "source_type": metadata.get("source_type", ""),
         "zhihu_answer_id": metadata.get("answer_id", ""),
-        "archived_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     lines = ["---"]
     for key, value in fields.items():

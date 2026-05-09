@@ -8,6 +8,7 @@
 
 - 抓取知乎个人主页动态，包括赞同、发布、发表等活动。
 - 提取回答正文，并通过知乎评论 API 抓取第一页评论。
+- 从动态卡片中提取作者、发布时间、原文 URL 等元信息，写入 Markdown 表头。
 - 自动下载正文图片，保存到与对应 Markdown 文件同名的目录。
 - 按 `YYYY/MM/` 结构归档 Markdown 文件。
 - 使用 SQLite 记录已抓取文章，避免重复抓取。
@@ -50,6 +51,23 @@ save_zhihu_activity/
 └── 2026/
     └── 04/
 ```
+
+## Markdown 表头
+
+每篇归档 Markdown 会在正文前写入 YAML front matter，便于后续检索、索引或导入知识库工具：
+
+```yaml
+---
+title: "文章标题"
+author: "作者名"
+published_at: "2026-05-09 00:37"
+source_url: "https://www.zhihu.com/question/.../answer/..."
+source_type: "answer"
+zhihu_answer_id: "2036243359497507510"
+---
+```
+
+这些元信息优先从知乎动态卡片底部的时间链接读取，例如链接上的 `data-tooltip="发布于..."`、`aria-label="发布于..."` 和 `href`；作者和内容类型优先从 `data-zop` 读取，必要时回退到页面 DOM 或 `meta[itemprop]` 字段。
 
 ## 快速部署
 
