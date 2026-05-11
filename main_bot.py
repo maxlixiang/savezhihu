@@ -298,28 +298,61 @@ validate_runtime_environment()
 
 bot = telebot.TeleBot(TG_BOT_TOKEN)
 
+def redact_git_secret(value):
+    value = str(value or "")
+    if GITHUB_TOKEN:
+        value = value.replace(GITHUB_TOKEN, "[GITHUB_TOKEN]")
+        value = value.replace(quote(GITHUB_TOKEN, safe=""), "[GITHUB_TOKEN]")
+    return value
+
+def run_git_command(repo_path, args, check=True):
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if check and result.returncode != 0:
+        output = (result.stderr or result.stdout or "").strip()
+        command_text = redact_git_secret("git " + " ".join(args))
+        raise RuntimeError(f"{command_text} failed with exit {result.returncode}: {redact_git_secret(output)}")
+    return result
+
 def sync_to_github():
-    """🌟 新增：自动提交并推送到 GitHub"""
+    """Commit local archive changes, rebase remote updates, then push."""
     repo_path = GITHUB_REPO_PATH
     try:
-        subprocess.run(["git", "config", "--global", "user.email", "bot@github.com"], check=True)
-        subprocess.run(["git", "config", "--global", "user.name", "ZhihuBot"], check=True)
-        subprocess.run(["git", "add", "."], cwd=repo_path, check=True)
-        
-        status = subprocess.run(["git", "status", "--porcelain"], cwd=repo_path, capture_output=True, text=True)
-        if status.stdout.strip(): # 有新文件才提交
-            commit_msg = f"🤖 Auto sync {time.strftime('%Y-%m-%d %H:%M')}"
-            subprocess.run(["git", "commit", "-m", commit_msg], cwd=repo_path, check=True)
-            if GITHUB_TOKEN:
-                safe_token = quote(GITHUB_TOKEN, safe="")
-                push_url = f"https://x-access-token:{safe_token}@github.com/{GITHUB_REPOSITORY}.git"
-                subprocess.run(["git", "push", push_url, "HEAD:main"], cwd=repo_path, check=True)
-            else:
-                subprocess.run(["git", "push"], cwd=repo_path, check=True)
+        run_git_command(repo_path, ["config", "--global", "user.email", "bot@github.com"])
+        run_git_command(repo_path, ["config", "--global", "user.name", "ZhihuBot"])
+
+        run_git_command(repo_path, ["add", "."])
+        status = run_git_command(repo_path, ["status", "--porcelain"])
+        if status.stdout.strip():
+            commit_msg = f"Auto sync {time.strftime('%Y-%m-%d %H:%M')}"
+            run_git_command(repo_path, ["commit", "-m", commit_msg])
+
+        if GITHUB_TOKEN:
+            safe_token = quote(GITHUB_TOKEN, safe="")
+            remote_for_push = f"https://x-access-token:{safe_token}@github.com/{GITHUB_REPOSITORY}.git"
+        else:
+            remote_for_push = "origin"
+
+        # Integrate remote commits first so push is not rejected with "fetch first".
+        run_git_command(repo_path, ["fetch", "origin", "main"])
+        local_head = run_git_command(repo_path, ["rev-parse", "HEAD"]).stdout.strip()
+        remote_head = run_git_command(repo_path, ["rev-parse", "FETCH_HEAD"]).stdout.strip()
+        if local_head != remote_head:
+            run_git_command(repo_path, ["rebase", "FETCH_HEAD"])
+
+        ahead_count = run_git_command(repo_path, ["rev-list", "--count", "FETCH_HEAD..HEAD"]).stdout.strip()
+        if ahead_count and int(ahead_count) > 0:
+            run_git_command(repo_path, ["push", remote_for_push, "HEAD:main"])
             return True
+
         return False
     except Exception as e:
-        print(f"Git Sync 失败: {e}")
+        print(f"Git Sync failed: {redact_git_secret(e)}")
         return False
 
 def execute_scrape_task(is_manual=False):
